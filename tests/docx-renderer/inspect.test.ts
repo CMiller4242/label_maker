@@ -6,17 +6,19 @@ import { inspectDocxTemplate } from "@label-maker/docx-renderer";
 const templatesDir = path.join(import.meta.dirname, "..", "..", "fixtures", "label-templates");
 
 describe("inspectDocxTemplate against the two committed real fixtures", () => {
-  it("avery-5155/original.docx: reports it is NOT a usable Word document", async () => {
+  it("avery-5155/original.docx: is a valid Word document, but a 7-column interleaved grid (not a uniform 4-column grid)", async () => {
     const buffer = readFileSync(path.join(templatesDir, "avery-5155", "original.docx"));
     const report = await inspectDocxTemplate({ buffer, filePath: "avery-5155/original.docx" });
 
-    // This is the actual, honest finding for the currently-committed
-    // fixture: it is an Office theme package (.thmx-shaped zip), not a
-    // Word document - it has no word/document.xml part at all.
-    expect(report.tableCount).toBe(0);
+    // See tests/docx-renderer/real-avery-5155.test.ts for the full
+    // structural assertions. Real finding: the fixture is now a valid
+    // Word document with one fixed-layout table, 15 rows - but its
+    // <w:tblGrid> has 7 columns (4 real label columns interleaved with 3
+    // vertically-merged spacer columns for horizontal pitch), not the
+    // uniform 4 the current classifier/validator expect.
+    expect(report.tableCount).toBe(1);
     expect(report.classification).toBe("AMBIGUOUS");
-    expect(report.classificationConfidence).toBe(0);
-    expect(report.warnings.some((w) => w.includes("word/document.xml"))).toBe(true);
+    expect(report.tables[0]?.totalWritableCells).toBe(105);
     expect(report.sha256).toMatch(/^[0-9a-f]{64}$/);
   });
 

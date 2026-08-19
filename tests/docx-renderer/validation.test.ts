@@ -52,9 +52,26 @@ describe("validateFixedGridTemplate", () => {
     );
   });
 
-  it("rejects the real avery-5155 fixture (not a valid Word document)", async () => {
+  it("loads the real avery-5155 fixture but rejects it as a 7-column interleaved grid, not a uniform 4-column grid", async () => {
+    // The real fixture IS now a valid Word document (see real-avery-5155.test.ts
+    // for the full inspection assertions) - it just doesn't match the
+    // uniform-4-columns-per-row shape this validator currently requires
+    // (it uses 4 real label columns interleaved with 3 vertically-merged
+    // spacer columns for horizontal pitch, per a common Avery template
+    // pattern).
     const buffer = readFileSync(path.join(templatesDir, "avery-5155", "original.docx"));
-    await expect(loadTemplateDocx(buffer, "avery-5155")).rejects.toThrow();
+    const templatePackage = await loadTemplateDocx(buffer, "avery-5155");
+
+    expect(() => validateFixedGridTemplate(templatePackage, EXPECTED)).toThrow(
+      InvalidFixedGridTemplateError,
+    );
+    try {
+      validateFixedGridTemplate(templatePackage, EXPECTED);
+      expect.unreachable();
+    } catch (error) {
+      const issues = (error as InvalidFixedGridTemplateError).issues;
+      expect(issues.some((i) => i.includes("7 columns"))).toBe(true);
+    }
   });
 
   it("rejects the real avery-22802 fixture (floating, not a fixed grid)", async () => {

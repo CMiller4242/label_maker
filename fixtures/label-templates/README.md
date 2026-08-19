@@ -15,16 +15,20 @@ Both `LabelTemplate` presets (`avery-5155`, `avery-22802`) point at the
 `inspectDocxTemplate()` against both at seed time and stores the result in
 `configJson.sourceInspection`).
 
-**Caveat:** `avery-5155/original.docx`, as currently committed, is **not a
-valid Word document** - it has no `word/document.xml` part (it appears to
-be an Office theme/`.thmx` package committed under the wrong name). Run
-`pnpm exec tsx scripts/inspect-docx-template.ts` to confirm this yourself.
-Until it is replaced with a real, valid Avery 5155 template (a normal
-in-flow, fixed-layout table of exactly 4 columns x 15 rows), DOCX
-generation against the `avery-5155` preset will fail with a typed
-`TEMPLATE_UNAVAILABLE` error. See `packages/docx-renderer/src/README.md`
-and `avery-5155/PRINT-TEST.md` for the full explanation and the manual
-print-validation procedure to run once a real template is in place.
+**Caveat:** `avery-5155/original.docx` is a valid Word document (an
+earlier invalid/theme-derived version of this file has been replaced), but
+DOCX generation still fails against it: its `<w:tblGrid>` has 7 columns (4
+real label columns interleaved with 3 narrow, vertically-merged spacer
+columns for horizontal pitch - a common Avery Word-template pattern), not
+the uniform 4 columns per row `validateFixedGridTemplate()` currently
+requires. Run `pnpm exec tsx scripts/inspect-docx-template.ts
+fixtures/label-templates/avery-5155/original.docx` to confirm this
+yourself. `POST /label-runs` against `avery-5155` fails with a typed
+`TEMPLATE_UNAVAILABLE` error until the validator/renderer are extended to
+recognize interleaved spacer columns. See
+`packages/docx-renderer/src/README.md` and `avery-5155/PRINT-TEST.md` for
+the full explanation and the manual print-validation procedure to run once
+rendering succeeds.
 
 `avery-22802/original.docx` is a genuine, valid Word document: 8 tables,
 each using floating/anchored positioning (`<w:tblpPr>`), which is why it is

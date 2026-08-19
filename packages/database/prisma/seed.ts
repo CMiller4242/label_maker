@@ -45,6 +45,8 @@ async function main(): Promise<void> {
     filePath: "fixtures/label-templates/avery-5155/original.docx",
   });
 
+  const avery5155Table = avery5155Inspection.tables[0];
+
   const avery5155ConfigJson = {
     templateVersion: TEMPLATE_VERSION,
     sourceInspection: {
@@ -53,20 +55,49 @@ async function main(): Promise<void> {
       tableCount: avery5155Inspection.tableCount,
       warnings: avery5155Inspection.warnings,
     },
-    // IMPORTANT: at seed time, fixtures/label-templates/avery-5155/original.docx
-    // does NOT contain a usable word/document.xml part (see
-    // sourceInspection.warnings above) - it is not currently a valid Word
-    // document, so the geometry below is a structural placeholder ONLY, not
-    // a measurement. Avery 5155 is a known 4-column x 15-row / 60-label
-    // sheet, so columns/rows/labelsPerSheet are correct regardless, but
-    // every dimension below MUST be replaced once a real, valid Avery 5155
-    // .docx is committed and re-inspected.
+    // fixtures/label-templates/avery-5155/original.docx (re-inspected here at
+    // seed time) IS now a valid Word document with one table, 15 rows,
+    // fixed layout, and exact row heights - see sourceInspection above.
+    // HOWEVER: its <w:tblGrid> has 7 columns
+    // (widths in twips: [2520, 432, 2520, 432, 2520, 432, 2520]), not the
+    // uniform 4 columns per row that validateFixedGridTemplate()/
+    // renderFixedGridDocx() currently require. This is a real, common Avery
+    // Word-template pattern: 4 real label columns interleaved with 3
+    // narrow, vertically-merged spacer/gutter columns (confirmed via
+    // <w:vMerge> on the narrow columns) used to get the correct horizontal
+    // pitch between label columns. inspectDocxTemplate() therefore reports
+    // classification "AMBIGUOUS" (105 raw cells, not the expected 60), and
+    // renderFixedGridDocx() will fail InvalidFixedGridTemplateError against
+    // this exact file until the validator/renderer are extended to
+    // recognize interleaved spacer columns - that extension is out of scope
+    // for this pass (verification/fixture-activation only, no renderer
+    // changes). Page size and margins below ARE real measurements from this
+    // file; label/pitch/safeInsets are left as TODO rather than guessed,
+    // since correctly deriving them requires that renderer-side
+    // interleaved-column support which does not exist yet.
     geometry: {
-      page: { widthPt: 612, heightPt: 792 }, // TODO: confirm against a real template
-      margins: { topPt: 0, bottomPt: 0, leftPt: 0, rightPt: 0 }, // TODO
-      label: { widthPt: 0, heightPt: 0 }, // TODO
-      pitch: { horizontalPt: 0, verticalPt: 0 }, // TODO
-      safeInsets: { topPt: 0, bottomPt: 0, leftPt: 0, rightPt: 0 }, // TODO
+      page: {
+        widthPt: (avery5155Inspection.pageGeometry.widthTwips ?? 0) / 20,
+        heightPt: (avery5155Inspection.pageGeometry.heightTwips ?? 0) / 20,
+      },
+      margins: {
+        topPt: (avery5155Inspection.pageGeometry.marginTopTwips ?? 0) / 20,
+        bottomPt: (avery5155Inspection.pageGeometry.marginBottomTwips ?? 0) / 20,
+        leftPt: (avery5155Inspection.pageGeometry.marginLeftTwips ?? 0) / 20,
+        rightPt: (avery5155Inspection.pageGeometry.marginRightTwips ?? 0) / 20,
+      },
+      // TODO: requires interleaved-spacer-column support in the renderer/
+      // validator to derive correctly (see note above) - do not infer here.
+      label: { widthPt: 0, heightPt: 0 },
+      pitch: { horizontalPt: 0, verticalPt: 0 },
+      safeInsets: { topPt: 0, bottomPt: 0, leftPt: 0, rightPt: 0 },
+      // Raw measurements actually available from this file's <w:tblGrid> /
+      // row height, for whenever interleaved-column support is added.
+      rawTableGrid: {
+        gridColumnWidthsTwips: avery5155Table?.gridColumnWidthsTwips ?? [],
+        rowHeightTwips: avery5155Table?.rows[0]?.heightTwips ?? null,
+        rowHeightRule: avery5155Table?.rows[0]?.heightRule ?? null,
+      },
     },
     fixedTableLayout: {
       tableLayoutMode: "fixed",
@@ -99,11 +130,12 @@ async function main(): Promise<void> {
     },
   });
 
-  if (avery5155Inspection.tableCount === 0) {
+  if (avery5155Inspection.classification !== "AVERY_5155_LIKE_FIXED_GRID") {
     console.warn(
-      "WARNING: fixtures/label-templates/avery-5155/original.docx is not a valid Word document " +
-        "(no word/document.xml). renderFixedGridDocx() will fail validation against it until a " +
-        "real Avery 5155 template is committed. See PRINT-TEST.md.",
+      `WARNING: fixtures/label-templates/avery-5155/original.docx inspected as ` +
+        `"${avery5155Inspection.classification}", not "AVERY_5155_LIKE_FIXED_GRID". ` +
+        `renderFixedGridDocx() will fail InvalidFixedGridTemplateError against this file. See ` +
+        `packages/database/prisma/seed.ts's avery5155ConfigJson comment and PRINT-TEST.md.`,
     );
   }
 

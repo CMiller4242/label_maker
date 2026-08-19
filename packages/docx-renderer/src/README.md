@@ -15,30 +15,36 @@ The optional debug-JSON renderer (`renderDebugJsonArtifact`) still exists
 and can be used as a secondary, development-time output for either
 template - it never claims to be a real DOCX.
 
-## Important caveat: the committed Avery 5155 fixture is not a valid Word document
+## Important caveat: the committed Avery 5155 fixture uses an interleaved-spacer-column grid the validator doesn't recognize yet
 
-`fixtures/label-templates/avery-5155/original.docx` currently only contains
-`[Content_Types].xml`, `_rels/.rels`, and `theme/theme/*` parts - **no
-`word/document.xml`**. Its `_rels/.rels` points at
-`theme/theme/themeManager.xml`, which is the structure of an Office _theme_
-package (`.thmx`), not a Word document. Run
-`pnpm exec tsx scripts/inspect-docx-template.ts` to see this for yourself;
-the inspector reports `tableCount: 0`, `classification: "AMBIGUOUS"`, and an
-explicit warning naming the missing part.
+`fixtures/label-templates/avery-5155/original.docx` **is** a valid Word
+document (it was previously an invalid/theme-derived file; that has been
+replaced). Run `pnpm exec tsx scripts/inspect-docx-template.ts
+fixtures/label-templates/avery-5155/original.docx` to see the current real
+report: one table, 15 rows, fixed layout, exact 950-twip row heights, real
+US Letter page geometry - but its `<w:tblGrid>` declares **7** columns
+(widths in twips: `[2520, 432, 2520, 432, 2520, 432, 2520]`), not the 4 this
+validator currently expects. Inspecting the raw XML shows the narrow
+432-twip columns (indices 1, 3, 5) carry `<w:vMerge>`, i.e. this is the
+common Avery Word-template pattern of **4 real label columns interleaved
+with 3 narrow, vertically-merged spacer/gutter columns** used to get the
+correct horizontal pitch between label columns - 105 raw grid cells, of
+which 60 are the actual writable label positions.
 
-Practical effect: `renderFixedGridDocx()` will throw
+Practical effect: `renderFixedGridDocx()` throws
 `InvalidFixedGridTemplateError` against the committed fixture today, because
-`loadTemplateDocx()`/`validateFixedGridTemplate()` correctly refuse to treat
-a non-Word-document as a usable template. **The renderer code itself is
-complete and works against a real, valid Avery 5155 `.docx`** containing a
-normal in-flow, fixed-layout table of exactly 4 columns × 15 rows (60
-cells) - this package's DOCX-generation tests exercise that exact path
-against a small, controlled, hand-authored fixed-grid `.docx` fixture built
-purely for structural testing (never claimed to be the real Avery 5155
-template, and never derived from any product deck). Until a real Avery 5155
-source template is committed to `fixtures/label-templates/avery-5155/`,
-end-to-end rendering against the "real" fixture will fail loudly and
-correctly, rather than silently producing garbage.
+`validateFixedGridTemplate()` requires every row to have exactly `columns`
+(4) cells and does not yet understand interleaved spacer columns. **This is
+a real, common template pattern, not a corrupt or wrong file** - handling
+it correctly requires validator/renderer changes (recognizing which grid
+columns are real label columns vs. merged spacers) that are intentionally
+out of scope for the current milestone. This package's DOCX-generation
+tests exercise the existing uniform-4-column renderer path against a small,
+controlled, hand-authored fixed-grid `.docx` fixture built purely for
+structural testing (never claimed to be the real Avery 5155 template, and
+never derived from any product deck); `tests/docx-renderer/real-avery-5155.test.ts`
+separately documents the real fixture's actual (currently-failing)
+behavior, so this gap is tracked rather than silently left undiscovered.
 
 ## Rendering strategy
 
@@ -145,12 +151,17 @@ real physical sheet.
 
 ## TODOs
 
-- [ ] Replace `fixtures/label-templates/avery-5155/original.docx` with a
-      real, valid Avery 5155 Word template (see the caveat above), then
-      re-run `pnpm exec tsx scripts/inspect-docx-template.ts` and update the
-      seed's `geometry`/`labelTextStyle` from actual measurements.
+- [ ] Extend `validateFixedGridTemplate()`/`renderFixedGridDocx()` to
+      recognize interleaved vertically-merged spacer columns (see the
+      caveat above) so the real, valid `fixtures/label-templates/avery-5155/original.docx`
+      validates and renders - this is the actual blocker today, not an
+      invalid/missing source file.
+- [ ] Once that support exists, populate the seed's `geometry.label`/
+      `geometry.pitch`/`geometry.safeInsets` (currently left as explicit
+      TODOs - see `packages/database/prisma/seed.ts`) from the real
+      per-column measurements already captured under `geometry.rawTableGrid`.
 - [ ] Complete `fixtures/label-templates/avery-5155/PRINT-TEST.md`'s manual
-      acceptance procedure once a real template exists.
+      acceptance procedure once rendering succeeds against the real template.
 - [ ] Design and implement `renderFloatingDocx()` for Avery 22802 - a
       separate geometry model (page-anchored absolute positioning) from the
       fixed-grid path, tested by printing from Word.

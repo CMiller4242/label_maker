@@ -91,9 +91,8 @@ curl -X POST http://localhost:3000/label-runs \
   -H "content-type: application/json" \
   -d '{"sourceDocumentId":"<documentId>","labelTemplateId":"avery-5155","copiesPerProduct":8}'
 # -> {"labelRun":{...},"artifact":{"storageKey":"artifacts/....docx",...}}
-# (as committed today, avery-5155's source .docx is invalid - see "Label
-# templates" below - so this currently returns a 422 TEMPLATE_UNAVAILABLE
-# error until a real Avery 5155 template file is committed)
+# (as committed today this currently returns a 422 TEMPLATE_UNAVAILABLE
+# error for avery-5155 - see "Label templates" below for why)
 
 curl -o label-run.docx http://localhost:3000/label-runs/<labelRunId>/download
 ```
@@ -136,16 +135,20 @@ which inspects their source `.docx` files at seed time):
 | Avery 5155 (`avery-5155`)   | `FIXED_GRID` (4 columns x 15 rows = 60 labels/sheet) | **Supported** for a valid source template - see the caveat below                          | `fixtures/label-templates/avery-5155/original.docx`  |
 | Avery 22802 (`avery-22802`) | `FLOATING` (8 independently-positioned tables)       | **Not supported** - `POST /label-runs` returns a typed `UNSUPPORTED_RENDERING_MODE` error | `fixtures/label-templates/avery-22802/original.docx` |
 
-**Important caveat:** the committed `fixtures/label-templates/avery-5155/original.docx`
-is currently **not a valid Word document** - opening it shows it has no
-`word/document.xml` part; it appears to be an Office theme (`.thmx`)
-package committed under the wrong name. `POST /label-runs` against
-`avery-5155` will return a `422 TEMPLATE_UNAVAILABLE` error until a real
-Avery 5155 template file replaces it. The DOCX rendering code itself is
-complete and is exercised end-to-end in `tests/docx-renderer/` and
-`tests/integration/` against a small controlled synthetic fixed-grid
-`.docx` built purely for testing - never presented as the real template.
-See `packages/docx-renderer/src/README.md` for the full explanation.
+**Important caveat:** `fixtures/label-templates/avery-5155/original.docx`
+is a valid Word document, but generation still fails against it: its
+`<w:tblGrid>` declares 7 columns (4 real label columns interleaved with 3
+narrow, vertically-merged spacer columns for horizontal pitch - a common
+Avery Word-template pattern), not the uniform 4 columns per row
+`validateFixedGridTemplate()` currently requires. `POST /label-runs`
+against `avery-5155` returns a `422 TEMPLATE_UNAVAILABLE` error until the
+validator/renderer are extended to recognize interleaved spacer columns.
+The DOCX rendering code itself is exercised end-to-end in
+`tests/docx-renderer/` and `tests/integration/` against a small controlled
+synthetic fixed-grid `.docx` built purely for testing (never presented as
+the real template); `tests/docx-renderer/real-avery-5155.test.ts`
+separately documents the real fixture's actual current behavior. See
+`packages/docx-renderer/src/README.md` for the full explanation.
 
 ### Running template inspection
 
@@ -236,12 +239,14 @@ do not treat any part of this repository as claiming print accuracy.**
   `suggestedFutureExtractionMethod: "OCR_REQUIRED"`, but nothing runs OCR.
 - **LLM-based extraction.** Not used anywhere, and not required for
   standard parsing per the project's design constraints.
-- **Verified Avery 5155 physical geometry.** The committed
-  `fixtures/label-templates/avery-5155/original.docx` is not currently a
-  valid Word document (see [Label templates](#label-templates)), and the
-  seeded `labelTextStyle`/`geometry` config is explicitly provisional -
-  neither has been confirmed against a physical printout. See
-  `fixtures/label-templates/avery-5155/PRINT-TEST.md`.
+- **Interleaved-spacer-column grid support.** The committed
+  `fixtures/label-templates/avery-5155/original.docx` uses a real Avery
+  template pattern (4 label columns interleaved with 3 vertically-merged
+  spacer columns) the validator/renderer don't recognize yet, so
+  generation fails against it (see [Label templates](#label-templates)).
+  The seeded `labelTextStyle`/`geometry` config is also explicitly
+  provisional - neither has been confirmed against a physical printout.
+  See `fixtures/label-templates/avery-5155/PRINT-TEST.md`.
 - **Spreadsheet mapping endpoint.** `parseWorkbook()` accepts an explicit
   `SpreadsheetMapping` for ambiguous workbooks, but there is no API route
   to submit one yet (`apps/api` TODO).

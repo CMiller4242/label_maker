@@ -1,4 +1,4 @@
-.PHONY: up down logs install dev build lint typecheck test db-migrate db-seed clean
+.PHONY: up down logs install dev build lint typecheck test db-generate db-migrate db-seed clean
 
 up:
 	docker compose up -d
@@ -26,6 +26,9 @@ typecheck:
 
 test:
 	pnpm test
+
+db-generate:
+	pnpm db:generate
 
 db-migrate:
 	pnpm db:migrate

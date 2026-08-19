@@ -12,7 +12,7 @@ export default defineConfig({
     env: {
       DATABASE_URL:
         process.env.DATABASE_URL ??
-        "postgresql://label_maker:label_maker@localhost:5432/label_maker?schema=public",
+        "postgresql://label_maker:label_maker@localhost:5433/label_maker?schema=public",
       REDIS_URL: process.env.REDIS_URL ?? "redis://localhost:6379",
       STORAGE_UPLOADS_DIR: process.env.STORAGE_UPLOADS_DIR ?? "./storage/uploads",
       STORAGE_ARTIFACTS_DIR: process.env.STORAGE_ARTIFACTS_DIR ?? "./storage/artifacts",

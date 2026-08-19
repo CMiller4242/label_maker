@@ -1,0 +1,13 @@
+{
+  "name": "@label-maker/tests-integration",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "@label-maker/api": "workspace:*",
+    "@label-maker/database": "workspace:*",
+    "@label-maker/shared": "workspace:*",
+    "@label-maker/worker": "workspace:*",
+    "fastify": "^5.2.0",
+    "vitest": "^2.1.8"
+  }
+}

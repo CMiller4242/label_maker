@@ -1,0 +1,22 @@
+{
+  "name": "@label-maker/ingestion",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@label-maker/shared": "workspace:*",
+    "csv-parse": "^5.6.0",
+    "pdfjs-dist": "^4.9.155",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  }
+}

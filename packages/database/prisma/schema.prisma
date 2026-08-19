@@ -1,0 +1,195 @@
+// Prisma schema for the label-generation application.
+//
+// Design notes:
+// - Raw extraction candidates (ExtractionCandidate) are kept separate from
+//   user-approved Product records so a human can review/correct data before
+//   anything is used to generate labels.
+// - Monetary values are always stored as integer cents (priceCents), never
+//   floats, to avoid rounding drift.
+// - SourcePage/ExtractionCandidate retain source evidence (raw text, row
+//   numbers, bounding boxes) so extraction decisions can be audited.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum SourceDocumentExtension {
+  PDF
+  CSV
+  XLSX
+  XLS
+}
+
+enum ProcessingJobType {
+  INGEST_DOCUMENT
+  GENERATE_LABEL_RUN
+}
+
+enum ProcessingJobStatus {
+  QUEUED
+  PROCESSING
+  COMPLETED
+  FAILED
+  NEEDS_REVIEW
+}
+
+enum ExtractionMethod {
+  NATIVE_TEXT
+  OCR
+  SPREADSHEET
+  MANUAL
+}
+
+enum ExtractionField {
+  SKU
+  DESCRIPTION
+  PRICE
+  INCLUDE_STATUS
+}
+
+enum ProductStatus {
+  AUTO_ACCEPTED
+  NEEDS_REVIEW
+  APPROVED
+  EXCLUDED
+}
+
+enum LabelTemplateRenderingMode {
+  FIXED_GRID
+  FLOATING
+}
+
+enum LabelRunStatus {
+  DRAFT
+  READY
+  GENERATED
+  FAILED
+}
+
+model SourceDocument {
+  id               String                   @id @default(uuid())
+  originalFilename String
+  mimeType         String
+  extension        SourceDocumentExtension
+  storageKey       String
+  byteSize         Int
+  sha256           String
+  pageCount        Int?
+  createdAt        DateTime                 @default(now())
+
+  processingJobs ProcessingJob[]
+  sourcePages    SourcePage[]
+  products       Product[]
+  labelRuns      LabelRun[]
+
+  @@index([sha256])
+}
+
+model ProcessingJob {
+  id               String              @id @default(uuid())
+  sourceDocumentId String
+  sourceDocument   SourceDocument      @relation(fields: [sourceDocumentId], references: [id], onDelete: Cascade)
+  jobType          ProcessingJobType
+  status           ProcessingJobStatus @default(QUEUED)
+  progressCurrent  Int                 @default(0)
+  progressTotal    Int                 @default(0)
+  errorCode        String?
+  errorMessage     String?
+  createdAt        DateTime            @default(now())
+  startedAt        DateTime?
+  completedAt      DateTime?
+
+  @@index([status])
+  @@index([sourceDocumentId])
+}
+
+model SourcePage {
+  id                    String            @id @default(uuid())
+  sourceDocumentId      String
+  sourceDocument        SourceDocument    @relation(fields: [sourceDocumentId], references: [id], onDelete: Cascade)
+  pageNumber            Int
+  extractionMethod      ExtractionMethod
+  rawText               String?
+  extractionConfidence  Float
+  needsReview           Boolean           @default(false)
+  createdAt             DateTime          @default(now())
+
+  extractionCandidates ExtractionCandidate[]
+  products             Product[]
+
+  @@index([sourceDocumentId, pageNumber])
+}
+
+model ExtractionCandidate {
+  id               String          @id @default(uuid())
+  sourcePageId     String?
+  sourcePage       SourcePage?     @relation(fields: [sourcePageId], references: [id], onDelete: Cascade)
+  rowNumber        Int?
+  field            ExtractionField
+  rawValue         String
+  normalizedValue  String?
+  confidence       Float
+  boundingBoxJson  Json?
+  ruleName         String?
+  createdAt        DateTime        @default(now())
+
+  @@index([sourcePageId])
+}
+
+model Product {
+  id                  String         @id @default(uuid())
+  sourceDocumentId    String
+  sourceDocument      SourceDocument @relation(fields: [sourceDocumentId], references: [id], onDelete: Cascade)
+  sourcePageId        String?
+  sourcePage          SourcePage?    @relation(fields: [sourcePageId], references: [id], onDelete: SetNull)
+  sourceRowNumber     Int?
+  sku                 String?
+  description         String?
+  priceCents          Int?
+  include             Boolean        @default(true)
+  status              ProductStatus  @default(NEEDS_REVIEW)
+  confidence           Float
+  extractionNotesJson Json?
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+
+  @@index([sourceDocumentId])
+  @@index([status])
+}
+
+model LabelTemplate {
+  id                  String                     @id @default(uuid())
+  displayName         String
+  renderingMode       LabelTemplateRenderingMode
+  columns             Int
+  rows                Int
+  labelsPerSheet      Int
+  templateStorageKey  String?
+  configJson          Json
+  isPreset            Boolean                    @default(false)
+  createdAt           DateTime                   @default(now())
+  updatedAt           DateTime                   @updatedAt
+
+  labelRuns LabelRun[]
+}
+
+model LabelRun {
+  id                          String         @id @default(uuid())
+  sourceDocumentId            String
+  sourceDocument              SourceDocument @relation(fields: [sourceDocumentId], references: [id], onDelete: Cascade)
+  labelTemplateId             String
+  labelTemplate               LabelTemplate  @relation(fields: [labelTemplateId], references: [id], onDelete: Restrict)
+  copiesPerProduct             Int
+  status                       LabelRunStatus @default(DRAFT)
+  placementPlanJson            Json
+  generatedArtifactStorageKey String?
+  createdAt                    DateTime       @default(now())
+  updatedAt                    DateTime       @updatedAt
+
+  @@index([sourceDocumentId])
+}

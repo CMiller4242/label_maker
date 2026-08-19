@@ -1,0 +1,11 @@
+{
+  "name": "@label-maker/tests-ingestion",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "@label-maker/ingestion": "workspace:*",
+    "@label-maker/shared": "workspace:*",
+    "vitest": "^2.1.8",
+    "xlsx": "^0.18.5"
+  }
+}

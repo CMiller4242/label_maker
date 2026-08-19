@@ -1,0 +1,31 @@
+{
+  "name": "@label-maker/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx watch src/worker.ts",
+    "start": "node dist/worker.js"
+  },
+  "dependencies": {
+    "@label-maker/database": "workspace:*",
+    "@label-maker/docx-renderer": "workspace:*",
+    "@label-maker/ingestion": "workspace:*",
+    "@label-maker/label-layout": "workspace:*",
+    "@label-maker/shared": "workspace:*",
+    "@label-maker/storage": "workspace:*",
+    "bullmq": "^5.34.6",
+    "ioredis": "^5.4.2",
+    "pino": "^9.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}

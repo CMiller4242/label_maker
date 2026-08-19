@@ -308,8 +308,25 @@ export async function renderFixedGridDocx(
 
   setChildren(body, newBodyChildren);
 
+  // Preserve the source template's own word/document.xml timestamp rather
+  // than letting JSZip stamp the current wall-clock time on this entry, and
+  // suppress JSZip's automatic parent-folder synthesis (createFolders:
+  // false) since real .docx packages store flat file entries with no
+  // explicit "word/" directory entry - without both of these, two renders
+  // of byte-identical content (same template + same placement plan)
+  // produce different output bytes (a fresh "word/" folder entry stamped
+  // with the current wall-clock time gets added on every call), which
+  // undermines reproducibility (a stable sha256 for identical inputs) and
+  // silently adds a zip entry the source template never had. Every other
+  // zip entry is untouched and keeps its original date.
+  const originalDocumentEntry = templatePackage.zip.file("word/document.xml");
+  const documentEntryDate = originalDocumentEntry?.date ?? new Date(0);
+
   const newDocumentXml = buildXml(templatePackage.documentTree);
-  templatePackage.zip.file("word/document.xml", newDocumentXml);
+  templatePackage.zip.file("word/document.xml", newDocumentXml, {
+    date: documentEntryDate,
+    createFolders: false,
+  });
 
   const buffer = await templatePackage.zip.generateAsync({
     type: "nodebuffer",

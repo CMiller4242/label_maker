@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import JSZip from "jszip";
 import { XMLParser } from "fast-xml-parser";
@@ -218,7 +219,7 @@ describe("real avery-5155/original.docx template", () => {
     expect(plan.totalSheets).toBe(1);
     expect(plan.totalPlacements).toBe(8);
 
-    const { documentXml, tree } = await renderAndReopen(buffer, realAveryTemplate(), plan);
+    const { result, documentXml, tree } = await renderAndReopen(buffer, realAveryTemplate(), plan);
 
     const tables = getTables(tree);
     expect(tables).toHaveLength(1);
@@ -234,11 +235,38 @@ describe("real avery-5155/original.docx template", () => {
     // 8 populated, 52 blank writable label cells.
     expect(sheetPlacements.size).toBe(8);
 
+    // Persist the exact buffer that was just validated above - not a
+    // separate re-render - so the artifact on disk is guaranteed to match
+    // what this test actually checked.
     mkdirSync(artifactsDir, { recursive: true });
-    writeFileSync(
-      path.join(artifactsDir, "real-avery-5155-1-product.docx"),
-      (await renderFixedGridDocx(buffer, realAveryTemplate(), plan)).buffer,
+    writeFileSync(path.join(artifactsDir, "real-avery-5155-1-product.docx"), result.buffer);
+  });
+
+  it("renders byte-identical output for identical inputs (reproducible artifacts, not wall-clock-dependent)", async () => {
+    // Regression test: renderFixedGridDocx() used to stamp the current
+    // wall-clock time into the rewritten word/document.xml zip entry (and
+    // JSZip would silently synthesize an extra "word/" directory entry,
+    // also wall-clock-stamped) - so two renders of the exact same template
+    // + placement plan produced different bytes/sha256 whenever they
+    // landed in different (2-second-granularity) ticks, even though the
+    // actual document content was identical. Persisted/cached artifacts
+    // for the same input must be reproducible, not flaky by run timing.
+    const buffer = readFileSync(path.join(templatesDir, "avery-5155", "original.docx"));
+    const products = [product("p1", "SKU-1", "Widget One", 999)];
+    const plan = buildPlacements(products, { id: "avery-5155", columns: 4, rows: 15, labelsPerSheet: 60 }, 8);
+
+    const first = await renderFixedGridDocx(buffer, realAveryTemplate(), plan);
+    await new Promise((resolve) => setTimeout(resolve, 2200)); // cross a DOS-date 2s boundary
+    const second = await renderFixedGridDocx(buffer, realAveryTemplate(), plan);
+
+    expect(createHash("sha256").update(second.buffer).digest("hex")).toBe(
+      createHash("sha256").update(first.buffer).digest("hex"),
     );
+
+    // No entries were silently added beyond the source template's own.
+    const sourceZip = await JSZip.loadAsync(buffer);
+    const outputZip = await JSZip.loadAsync(first.buffer);
+    expect(Object.keys(outputZip.files).sort()).toEqual(Object.keys(sourceZip.files).sort());
   });
 
   it("8 products x 8 copies: generates two real sheets, sheet 1 fills 60 writable labels, sheet 2 fills 4, page break only between sheets", async () => {

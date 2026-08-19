@@ -51,7 +51,14 @@ used in `generation.test.ts`.
 - `renderFixedGridDocx()` starts from a **byte-for-byte JSZip copy** of the
   source template and only ever rewrites `word/document.xml`. Every other
   package part (styles, theme, fonts, settings, relationships, media) is
-  preserved untouched.
+  preserved untouched. The rewritten `word/document.xml` zip entry reuses
+  the source template's own entry timestamp (via `date`) and disables
+  JSZip's automatic parent-folder synthesis (`createFolders: false`), so
+  two renders of the exact same template + placement plan produce
+  byte-identical output - not a different `word/` directory entry stamped
+  with whatever wall-clock time the render happened to run at. See
+  `tests/docx-renderer/real-avery-5155.test.ts`'s reproducibility
+  regression test.
 - `validateFixedGridTemplate()` is a strict, throwing gate: it requires
   exactly one normal in-flow, `<w:tblLayout w:type="fixed"/>` table whose
   recognized `FixedGridPattern` (`SIMPLE` or `INTERLEAVED_SPACER` - see

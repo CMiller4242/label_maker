@@ -18,11 +18,14 @@
     "db:migrate": "pnpm --filter @label-maker/database run migrate",
     "db:seed": "pnpm --filter @label-maker/database run seed",
     "fixtures:xlsx": "tsx scripts/create-xlsx-fixtures.ts",
-    "inspect:docx": "tsx scripts/inspect-docx-template.ts"
+    "inspect:docx": "tsx scripts/inspect-docx-template.ts",
+    "docx:sample-5155": "tsx scripts/generate-sample-avery-5155.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.18.0",
     "@label-maker/docx-renderer": "workspace:*",
+    "@label-maker/label-layout": "workspace:*",
+    "@label-maker/shared": "workspace:*",
     "@types/node": "^22.10.5",
     "@typescript-eslint/eslint-plugin": "^8.19.1",
     "@typescript-eslint/parser": "^8.19.1",

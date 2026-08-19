@@ -114,6 +114,7 @@ Run from the repo root (these fan out to workspace packages via pnpm `-r`):
 | `pnpm db:seed`                      | Seeds the `avery-5155` LabelTemplate preset                                                                                                                       |
 | `pnpm fixtures:xlsx`                | Regenerates `fixtures/xlsx/products-two-sheets.xlsx`                                                                                                              |
 | `pnpm inspect:docx`                 | Inspects the committed label template `.docx` files (or any path(s) passed as args) and prints a structural JSON report - see [Label templates](#label-templates) |
+| `pnpm docx:sample-5155`             | Generates real, persistent sample Avery 5155 `.docx` artifacts under `storage/artifacts/` (open them in Word) - see [Generating sample DOCX artifacts](#generating-sample-docx-artifacts) |
 
 ### Running tests without Docker
 
@@ -163,6 +164,35 @@ layout/grid/row/cell/font/paragraph properties, writable cell counts, and a
 best-effort classification (`AVERY_5155_LIKE_FIXED_GRID` /
 `AVERY_22802_LIKE_FLOATING` / `AMBIGUOUS`) with explicit warnings for
 missing or ambiguous metadata.
+
+### Generating sample DOCX artifacts
+
+```bash
+pnpm docx:sample-5155
+```
+
+Renders two real, persistent sample `.docx` files straight from the
+committed `fixtures/label-templates/avery-5155/original.docx` source
+template, using the exact same production `buildPlacements()`/
+`validatePlacements()` (`@label-maker/label-layout`) and
+`renderFixedGridDocx()` (`@label-maker/docx-renderer`) code paths a real
+label run uses - with controlled, non-sensitive sample product data (never
+real customer/product-deck content):
+
+- `storage/artifacts/sample-avery-5155-1-product.docx` (1 product x 8
+  copies: 8 filled labels, 52 blank)
+- `storage/artifacts/sample-avery-5155-8-products.docx` (8 products x 8
+  copies: two sheets, 60 filled + 4 filled)
+
+Each `.docx` gets a matching `*.metadata.json` sidecar (byte size, SHA-256,
+sheet/filled/blank counts). Both filenames are deterministic and
+overwritten on every run - open them directly in Microsoft Word to see the
+real rendered output. `storage/artifacts/` is git-ignored (see
+`.gitignore`), so these files never get committed. See
+`scripts/generate-sample-avery-5155.ts` and
+`tests/scripts/generate-sample-avery-5155.test.ts` (which writes to a
+temporary directory, never `storage/artifacts/`, and cleans up after
+itself).
 
 ### Creating a label run and downloading the DOCX
 

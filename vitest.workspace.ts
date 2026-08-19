@@ -5,4 +5,5 @@ export default defineWorkspace([
   "tests/label-layout/vitest.config.ts",
   "tests/docx-renderer/vitest.config.ts",
   "tests/integration/vitest.config.ts",
+  "tests/scripts/vitest.config.ts",
 ]);

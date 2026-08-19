@@ -248,6 +248,16 @@ export async function renderFixedGridDocx(
     bySlot.set(placement.slotIndex, placement);
   }
 
+  // Reverse lookup: physical (row, cell) -> logical slot index. Only cells
+  // present in this map are writable label cells; every other physical cell
+  // (spacer/gutter columns in the INTERLEAVED_SPACER pattern) is never
+  // touched - fillCell() is never called on it, so its XML (including any
+  // <w:vMerge>) is left exactly as cloned from the source.
+  const physicalCellToSlot = new Map<string, number>();
+  for (const mapping of validated.pattern.writableCellMap) {
+    physicalCellToSlot.set(`${mapping.physicalRowIndex}:${mapping.physicalCellIndex}`, mapping.logicalSlotIndex);
+  }
+
   const sheetTables: XmlNode[] = [];
   for (let sheetNumber = 1; sheetNumber <= plan.totalSheets; sheetNumber++) {
     const clonedTable = cloneNode(sourceTable);
@@ -257,7 +267,12 @@ export async function renderFixedGridDocx(
     rows.forEach((row, rowIndex) => {
       const cells = findDirectChildren(childrenOf(row), "w:tc");
       cells.forEach((cell, columnIndex) => {
-        const slotIndex = rowIndex * validated.columns + columnIndex;
+        const slotIndex = physicalCellToSlot.get(`${rowIndex}:${columnIndex}`);
+        if (slotIndex === undefined) {
+          // Not a writable label cell (e.g. a spacer/gutter column) - leave
+          // it completely untouched.
+          return;
+        }
         const placement = sheetPlacements?.get(slotIndex);
         if (placement) {
           const priceText =

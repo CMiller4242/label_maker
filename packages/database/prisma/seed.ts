@@ -46,6 +46,7 @@ async function main(): Promise<void> {
   });
 
   const avery5155Table = avery5155Inspection.tables[0];
+  const avery5155Pattern = avery5155Table?.fixedGridPattern ?? null;
 
   const avery5155ConfigJson = {
     templateVersion: TEMPLATE_VERSION,
@@ -56,25 +57,23 @@ async function main(): Promise<void> {
       warnings: avery5155Inspection.warnings,
     },
     // fixtures/label-templates/avery-5155/original.docx (re-inspected here at
-    // seed time) IS now a valid Word document with one table, 15 rows,
-    // fixed layout, and exact row heights - see sourceInspection above.
-    // HOWEVER: its <w:tblGrid> has 7 columns
-    // (widths in twips: [2520, 432, 2520, 432, 2520, 432, 2520]), not the
-    // uniform 4 columns per row that validateFixedGridTemplate()/
-    // renderFixedGridDocx() currently require. This is a real, common Avery
-    // Word-template pattern: 4 real label columns interleaved with 3
-    // narrow, vertically-merged spacer/gutter columns (confirmed via
-    // <w:vMerge> on the narrow columns) used to get the correct horizontal
-    // pitch between label columns. inspectDocxTemplate() therefore reports
-    // classification "AMBIGUOUS" (105 raw cells, not the expected 60), and
-    // renderFixedGridDocx() will fail InvalidFixedGridTemplateError against
-    // this exact file until the validator/renderer are extended to
-    // recognize interleaved spacer columns - that extension is out of scope
-    // for this pass (verification/fixture-activation only, no renderer
-    // changes). Page size and margins below ARE real measurements from this
-    // file; label/pitch/safeInsets are left as TODO rather than guessed,
-    // since correctly deriving them requires that renderer-side
-    // interleaved-column support which does not exist yet.
+    // seed time) is a valid Word document with one table, 15 rows, fixed
+    // layout, and exact row heights - see sourceInspection above. Its
+    // <w:tblGrid> has 7 raw columns (widths in twips:
+    // [2520, 432, 2520, 432, 2520, 432, 2520]): 4 real label columns
+    // interleaved with 3 narrow, vertically-merged spacer/gutter columns
+    // (confirmed via <w:vMerge> on the narrow columns), a common Avery
+    // Word-template pattern used to get the correct horizontal pitch
+    // between label columns. inspectDocxTemplate()/validateFixedGridTemplate()
+    // recognize this as the INTERLEAVED_SPACER fixed-grid pattern (4 logical
+    // label columns x 15 logical rows = 60 writable cells) and
+    // renderFixedGridDocx() writes only into the 4 writable raw columns
+    // below, never into the 3 spacer columns. logicalGrid is derived
+    // directly from that inspection, not hardcoded. Page size/margins and
+    // the raw table grid below ARE real measurements from this file;
+    // label/pitch/safeInsets remain explicitly provisional (0) since
+    // deriving physical label dimensions/print-safe insets requires manual
+    // Word/printer calibration - see PRINT-TEST.md.
     geometry: {
       page: {
         widthPt: (avery5155Inspection.pageGeometry.widthTwips ?? 0) / 20,
@@ -86,19 +85,37 @@ async function main(): Promise<void> {
         leftPt: (avery5155Inspection.pageGeometry.marginLeftTwips ?? 0) / 20,
         rightPt: (avery5155Inspection.pageGeometry.marginRightTwips ?? 0) / 20,
       },
-      // TODO: requires interleaved-spacer-column support in the renderer/
-      // validator to derive correctly (see note above) - do not infer here.
+      // Provisional: physical label size/pitch/safe-insets are not derivable
+      // from raw OOXML geometry alone (they depend on how Avery designed the
+      // interleaved spacer columns) - left explicitly at 0 pending manual
+      // Word/printer calibration (see PRINT-TEST.md), never guessed here.
       label: { widthPt: 0, heightPt: 0 },
       pitch: { horizontalPt: 0, verticalPt: 0 },
       safeInsets: { topPt: 0, bottomPt: 0, leftPt: 0, rightPt: 0 },
       // Raw measurements actually available from this file's <w:tblGrid> /
-      // row height, for whenever interleaved-column support is added.
+      // row height.
       rawTableGrid: {
         gridColumnWidthsTwips: avery5155Table?.gridColumnWidthsTwips ?? [],
         rowHeightTwips: avery5155Table?.rows[0]?.heightTwips ?? null,
         rowHeightRule: avery5155Table?.rows[0]?.heightRule ?? null,
       },
     },
+    // The inspected logical <-> physical label-grid mapping (see
+    // FixedGridPattern in packages/docx-renderer/src/types.ts). Derived
+    // entirely from inspectDocxTemplate() against the real source file -
+    // never hand-authored - so it always reflects the actual committed
+    // template.
+    logicalGrid: avery5155Pattern
+      ? {
+          patternType: avery5155Pattern.patternType,
+          logicalColumns: avery5155Pattern.logicalColumns,
+          logicalRows: avery5155Pattern.logicalRows,
+          writableRawColumnIndexes: avery5155Pattern.logicalLabelColumnIndexes,
+          spacerRawColumnIndexes: avery5155Pattern.spacerColumnIndexes,
+          rawGridColumnWidthsTwips: avery5155Pattern.rawGridColumnWidthsTwips,
+          rowHeightTwips: avery5155Table?.rows[0]?.heightTwips ?? null,
+        }
+      : null,
     fixedTableLayout: {
       tableLayoutMode: "fixed",
       exactRowHeights: true,

@@ -84,21 +84,6 @@ export function validateFixedGridTemplate(
     ]);
   }
 
-  if (table.rowCount !== expected.rows) {
-    issues.push(`Expected ${expected.rows} rows, found ${table.rowCount}.`);
-  }
-  const nonMatchingRows = table.rows.filter((r) => r.cellCount !== expected.columns);
-  if (nonMatchingRows.length > 0) {
-    issues.push(
-      `Expected every row to have exactly ${expected.columns} cells; ` +
-        `${nonMatchingRows.length} row(s) do not (e.g. row ${nonMatchingRows[0]?.rowIndex} has ${nonMatchingRows[0]?.cellCount}).`,
-    );
-  }
-  if (table.totalWritableCells !== expected.labelsPerSheet) {
-    issues.push(
-      `Expected ${expected.labelsPerSheet} total writable cells, found ${table.totalWritableCells}.`,
-    );
-  }
   if (!table.isFixedLayout) {
     issues.push(
       `Table layout is "${table.layoutType ?? "(unspecified, defaults to autofit)"}", expected "fixed". ` +
@@ -110,14 +95,88 @@ export function validateFixedGridTemplate(
       "Table uses floating/anchored positioning (<w:tblpPr>); expected normal in-flow placement.",
     );
   }
-  if (table.gridColumnWidthsTwips.length !== expected.columns) {
+
+  const pattern = table.fixedGridPattern;
+  if (!pattern) {
     issues.push(
-      `Expected <w:tblGrid> to declare ${expected.columns} explicit column width(s), found ${table.gridColumnWidthsTwips.length}.`,
+      `No recognized fixed-grid pattern (neither a simple uniform grid nor an interleaved-spacer-column ` +
+        `grid): ${table.fixedGridPatternDiagnostics.join(" ") || "no further diagnostics available."}`,
+    );
+    issues.unshift(`Actual table shape: ${describeTable(table)}.`);
+    throw new InvalidFixedGridTemplateError(templatePackage.templateStorageKey, issues);
+  }
+
+  if (pattern.logicalRows !== expected.rows) {
+    issues.push(`Expected ${expected.rows} rows, found ${pattern.logicalRows}.`);
+  }
+  if (pattern.logicalColumns !== expected.columns) {
+    issues.push(`Expected ${expected.columns} columns, found ${pattern.logicalColumns}.`);
+  }
+  if (pattern.writableCellMap.length !== expected.labelsPerSheet) {
+    issues.push(
+      `Expected ${expected.labelsPerSheet} total writable cells, found ${pattern.writableCellMap.length}.`,
+    );
+  }
+
+  const overlap = pattern.logicalLabelColumnIndexes.filter((i) =>
+    pattern.spacerColumnIndexes.includes(i),
+  );
+  if (overlap.length > 0) {
+    issues.push(
+      `Internal inconsistency: raw column(s) ${overlap.join(", ")} are classified as both writable and spacer.`,
+    );
+  }
+
+  const slotCounts = new Map<number, number>();
+  const cellKeyCounts = new Map<string, number>();
+  for (const mapping of pattern.writableCellMap) {
+    slotCounts.set(mapping.logicalSlotIndex, (slotCounts.get(mapping.logicalSlotIndex) ?? 0) + 1);
+    const cellKey = `${mapping.physicalRowIndex}:${mapping.physicalCellIndex}`;
+    cellKeyCounts.set(cellKey, (cellKeyCounts.get(cellKey) ?? 0) + 1);
+  }
+  const duplicateSlots = [...slotCounts.entries()].filter(([, count]) => count > 1);
+  if (duplicateSlots.length > 0) {
+    issues.push(
+      `writableCellMap has duplicate logical slot index(es): ${duplicateSlots.map(([slot]) => slot).join(", ")}.`,
+    );
+  }
+  const duplicateCells = [...cellKeyCounts.entries()].filter(([, count]) => count > 1);
+  if (duplicateCells.length > 0) {
+    issues.push(
+      `writableCellMap maps more than one logical slot onto the same physical cell: ${duplicateCells
+        .map(([key]) => key)
+        .join(", ")}.`,
+    );
+  }
+  if (pattern.logicalRows === expected.rows && pattern.logicalColumns === expected.columns) {
+    const expectedSlotCount = expected.rows * expected.columns;
+    const missingSlots: number[] = [];
+    for (let slot = 0; slot < expectedSlotCount; slot++) {
+      if (!slotCounts.has(slot)) missingSlots.push(slot);
+    }
+    if (missingSlots.length > 0) {
+      issues.push(
+        `writableCellMap is missing logical slot(s): ${missingSlots.slice(0, 5).join(", ")}` +
+          `${missingSlots.length > 5 ? `, and ${missingSlots.length - 5} more` : ""}.`,
+      );
+    }
+  }
+
+  const declaredRowHeights = new Set(
+    table.rows.map((r) => r.heightTwips).filter((h): h is number => h !== null),
+  );
+  if (declaredRowHeights.size > 1) {
+    issues.push(
+      `Rows declare inconsistent explicit heights: ${[...declaredRowHeights].join(", ")} twips - ` +
+        `expected a single uniform row height rule.`,
     );
   }
 
   if (issues.length > 0) {
-    issues.unshift(`Actual table shape: ${describeTable(table)}.`);
+    issues.unshift(
+      `Actual table shape: ${describeTable(table)} (pattern: ${pattern.patternType}, ` +
+        `${pattern.logicalColumns} logical columns x ${pattern.logicalRows} logical rows).`,
+    );
     throw new InvalidFixedGridTemplateError(templatePackage.templateStorageKey, issues);
   }
 
@@ -128,6 +187,7 @@ export function validateFixedGridTemplate(
     rows: expected.rows,
     labelsPerSheet: expected.labelsPerSheet,
     inspection: table,
+    pattern,
   };
 }
 

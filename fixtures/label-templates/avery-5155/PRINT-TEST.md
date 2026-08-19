@@ -10,32 +10,29 @@ Structural validity and print accuracy are different guarantees - CI can
 only check the former. This document is the manual procedure for the
 latter, and it has not been performed yet for this milestone.
 
-## Prerequisite: rendering does not succeed against this template yet
+## Structural status: rendering succeeds; typography/insets are still provisional
 
-`fixtures/label-templates/avery-5155/original.docx` **is** a valid Word
-document (an earlier, invalid/theme-derived version of this file has been
-replaced). However, `renderFixedGridDocx()` still fails against it: its
-`<w:tblGrid>` has 7 columns (4 real label columns interleaved with 3
-narrow, vertically-merged spacer columns for horizontal pitch - a common
-Avery Word-template pattern), not the uniform 4 columns per row the
-renderer currently requires. Run `pnpm exec tsx scripts/inspect-docx-template.ts
-fixtures/label-templates/avery-5155/original.docx` to confirm this
-yourself; see `packages/docx-renderer/src/README.md` for the full
-explanation and `tests/docx-renderer/real-avery-5155.test.ts` for the
-tests documenting this exact, current behavior. Before any of the steps
-below are possible:
+`fixtures/label-templates/avery-5155/original.docx` is a valid Word
+document with a `<w:tblGrid>` of 7 raw columns (4 real label columns
+interleaved with 3 narrow, vertically-merged spacer columns for horizontal
+pitch - a common Avery Word-template pattern). `inspectDocxTemplate()` /
+`validateFixedGridTemplate()` / `renderFixedGridDocx()` recognize this as
+the `INTERLEAVED_SPACER` fixed-grid pattern (4 logical label columns x 15
+logical rows = 60 writable cells) and generation succeeds end-to-end
+against the real fixture - run `pnpm exec tsx
+scripts/inspect-docx-template.ts fixtures/label-templates/avery-5155/original.docx`
+to confirm, or see `tests/docx-renderer/real-avery-5155.test.ts` for the
+automated structural tests (including re-opening a generated `.docx` and
+checking the 7-column grid, preserved `<w:vMerge>` in gutter cells, and
+populated/blank label cells).
 
-1. Extend `validateFixedGridTemplate()`/`renderFixedGridDocx()` (in
-   `packages/docx-renderer/src/`) to recognize interleaved
-   vertically-merged spacer columns, so it can correctly identify the 4
-   real label columns among the 7 raw grid columns.
-2. Re-run `pnpm exec tsx scripts/inspect-docx-template.ts` and confirm
-   generation succeeds end-to-end against the real fixture.
-3. Populate `packages/database/prisma/seed.ts`'s
-   `avery5155ConfigJson.geometry.label`/`.pitch`/`.safeInsets` (currently
-   explicit TODOs) from the real per-column measurements already captured
-   under `geometry.rawTableGrid`, and finalize `provisionalLabelTextStyle`
-   before trusting any print output.
+**What is still unverified:** `packages/database/prisma/seed.ts`'s
+`avery5155ConfigJson.geometry.label`/`.pitch`/`.safeInsets` and
+`provisionalLabelTextStyle` remain explicitly provisional - neither
+physical label dimensions nor font sizing/safe insets have been confirmed
+against a real printout. The manual procedure below is what confirms them;
+until it's performed, do not treat structural test success as print
+accuracy.
 
 ## Manual acceptance procedure
 

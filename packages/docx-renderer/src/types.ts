@@ -71,12 +71,24 @@ export interface PageGeometry {
   marginRightTwips: number | null;
 }
 
+/** Vertical-merge state of one raw table cell, per OOXML `<w:vMerge>` semantics. */
+export type CellVerticalMergeState = "restart" | "continue" | null;
+
+export interface CellInspection {
+  /** Raw cell index within its row, left to right (0-based). */
+  cellIndex: number;
+  widthTwips: number | null;
+  vMerge: CellVerticalMergeState;
+}
+
 export interface RowInspection {
   rowIndex: number;
   cellCount: number;
   heightTwips: number | null;
   heightRule: string | null;
   cantSplit: boolean;
+  /** Per-cell detail (width, vertical-merge state) for this row's raw cells. */
+  cells: CellInspection[];
 }
 
 export interface CellMarginInspection {
@@ -110,6 +122,43 @@ export interface TablePositioning {
   positionYTwips: number | null;
 }
 
+/**
+ * One of the fixed-grid table shapes this package knows how to map logical
+ * label slots onto physical `<w:tc>` cells for:
+ *
+ * - "SIMPLE": every raw grid column is a writable label column (e.g. the
+ *   package's synthetic test fixture: 4 raw columns, 4 logical columns,
+ *   no vertical merging).
+ * - "INTERLEAVED_SPACER": raw grid columns alternate label/spacer/label/...
+ *   /label (an odd count), with the narrow spacer columns vertically
+ *   merged (`<w:vMerge>`) down the table for horizontal pitch - the real
+ *   Avery 5155 template's shape (7 raw columns: 4 label + 3 spacer).
+ */
+export type FixedGridPatternType = "SIMPLE" | "INTERLEAVED_SPACER";
+
+/** One logical label slot's location in the physical table. */
+export interface WritableCellMapping {
+  /** Row-major logical slot index: physicalRowIndex * logicalColumns + logicalColumnIndex. */
+  logicalSlotIndex: number;
+  physicalRowIndex: number;
+  /** Index within the row's raw `<w:tc>` cells (0-based, left to right). */
+  physicalCellIndex: number;
+}
+
+export interface FixedGridPattern {
+  patternType: FixedGridPatternType;
+  /** Raw `<w:tblGrid>` column widths (twips), left to right - preserved verbatim from the source. */
+  rawGridColumnWidthsTwips: number[];
+  /** Raw column indexes that hold writable label content. */
+  logicalLabelColumnIndexes: number[];
+  /** Raw column indexes that are spacer/gutter columns and must never be written to. */
+  spacerColumnIndexes: number[];
+  logicalColumns: number;
+  logicalRows: number;
+  /** Every logical label slot's physical (row, cell) location - the renderer's only source of truth for where to write. */
+  writableCellMap: WritableCellMapping[];
+}
+
 export interface TableInspection {
   tableIndex: number;
   layoutType: string | null;
@@ -125,6 +174,16 @@ export interface TableInspection {
   paragraphSample: ParagraphSample | null;
   fontSample: FontSample | null;
   positioning: TablePositioning;
+  /** The recognized fixed-grid pattern, or null if this table doesn't match either known shape. */
+  fixedGridPattern: FixedGridPattern | null;
+  /**
+   * When `fixedGridPattern` is null, explains exactly which condition(s)
+   * were close-but-not-satisfied (e.g. "spacer columns aren't uniformly
+   * narrower", "row 3 spacer column 1 has no <w:vMerge>") - a
+   * near-miss should never be silently indistinguishable from "not a grid
+   * at all".
+   */
+  fixedGridPatternDiagnostics: string[];
 }
 
 export type TemplateClassification =
@@ -162,6 +221,8 @@ export interface ValidatedFixedGridTemplate {
   rows: number;
   labelsPerSheet: number;
   inspection: TableInspection;
+  /** The recognized pattern (SIMPLE or INTERLEAVED_SPACER) - the renderer's only source of truth for which physical cells are writable. */
+  pattern: FixedGridPattern;
 }
 
 // --- Label cell text style configuration -----------------------------------

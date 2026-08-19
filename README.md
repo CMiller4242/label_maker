@@ -132,23 +132,23 @@ which inspects their source `.docx` files at seed time):
 
 | Template                    | `renderingMode`                                      | DOCX export                                                                               | Source file                                          |
 | --------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------- | ---------------------------------------------------- |
-| Avery 5155 (`avery-5155`)   | `FIXED_GRID` (4 columns x 15 rows = 60 labels/sheet) | **Supported** for a valid source template - see the caveat below                          | `fixtures/label-templates/avery-5155/original.docx`  |
+| Avery 5155 (`avery-5155`)   | `FIXED_GRID` (4 columns x 15 rows = 60 labels/sheet) | **Supported**, including the real source template's interleaved-spacer-column grid | `fixtures/label-templates/avery-5155/original.docx`  |
 | Avery 22802 (`avery-22802`) | `FLOATING` (8 independently-positioned tables)       | **Not supported** - `POST /label-runs` returns a typed `UNSUPPORTED_RENDERING_MODE` error | `fixtures/label-templates/avery-22802/original.docx` |
 
-**Important caveat:** `fixtures/label-templates/avery-5155/original.docx`
-is a valid Word document, but generation still fails against it: its
-`<w:tblGrid>` declares 7 columns (4 real label columns interleaved with 3
-narrow, vertically-merged spacer columns for horizontal pitch - a common
-Avery Word-template pattern), not the uniform 4 columns per row
-`validateFixedGridTemplate()` currently requires. `POST /label-runs`
-against `avery-5155` returns a `422 TEMPLATE_UNAVAILABLE` error until the
-validator/renderer are extended to recognize interleaved spacer columns.
-The DOCX rendering code itself is exercised end-to-end in
-`tests/docx-renderer/` and `tests/integration/` against a small controlled
-synthetic fixed-grid `.docx` built purely for testing (never presented as
-the real template); `tests/docx-renderer/real-avery-5155.test.ts`
-separately documents the real fixture's actual current behavior. See
-`packages/docx-renderer/src/README.md` for the full explanation.
+**Note:** `fixtures/label-templates/avery-5155/original.docx`'s
+`<w:tblGrid>` declares 7 raw columns (4 real label columns interleaved with
+3 narrow, vertically-merged spacer columns for horizontal pitch - a common
+Avery Word-template pattern), not a uniform 4 columns per row. The
+inspector/validator/renderer recognize this as the `INTERLEAVED_SPACER`
+fixed-grid pattern and generation succeeds against the real file (`POST
+/label-runs` against `avery-5155` returns `201`). The DOCX rendering code
+is exercised end-to-end in `tests/docx-renderer/` and `tests/integration/`,
+both against a small controlled synthetic uniform-grid `.docx` built purely
+for testing and against the real committed Avery 5155 source file
+(`tests/docx-renderer/real-avery-5155.test.ts`). See
+`packages/docx-renderer/src/README.md` for the full explanation. Physical
+print alignment on real label stock has **not** been verified - see
+[Manual print validation](#manual-print-validation).
 
 ### Running template inspection
 
@@ -172,7 +172,6 @@ curl -X POST http://localhost:3000/label-runs \
   -H "content-type: application/json" \
   -d '{"sourceDocumentId":"<documentId>","labelTemplateId":"avery-5155","copiesPerProduct":8}'
 # -> 201 { "labelRun": {...}, "artifact": { "storageKey": "...", "sha256": "...", "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document" } }
-# -> 422 TEMPLATE_UNAVAILABLE today for avery-5155 (see the caveat above)
 # -> 422 UNSUPPORTED_RENDERING_MODE for avery-22802 (FLOATING export not implemented)
 
 # 2. Download the generated artifact
@@ -221,8 +220,9 @@ do not treat any part of this repository as claiming print accuracy.**
   text per cell from a configurable style, enforces fixed table
   layout/exact row heights/`cantSplit`, and inserts page breaks only
   between complete sheets - all structurally tested in
-  `tests/docx-renderer/`. See [Label templates](#label-templates) for the
-  current caveat about the committed Avery 5155 source file.
+  `tests/docx-renderer/`, including against the real committed Avery 5155
+  source file's interleaved-spacer-column grid. See
+  [Label templates](#label-templates).
 - DOCX template inspection (`inspectDocxTemplate()`, `scripts/inspect-docx-template.ts`)
   that opens `.docx` packages directly via JSZip + XML parsing (no Word/
   office suite required) and reports page/table/row/cell/font geometry plus
@@ -239,14 +239,13 @@ do not treat any part of this repository as claiming print accuracy.**
   `suggestedFutureExtractionMethod: "OCR_REQUIRED"`, but nothing runs OCR.
 - **LLM-based extraction.** Not used anywhere, and not required for
   standard parsing per the project's design constraints.
-- **Interleaved-spacer-column grid support.** The committed
-  `fixtures/label-templates/avery-5155/original.docx` uses a real Avery
-  template pattern (4 label columns interleaved with 3 vertically-merged
-  spacer columns) the validator/renderer don't recognize yet, so
-  generation fails against it (see [Label templates](#label-templates)).
-  The seeded `labelTextStyle`/`geometry` config is also explicitly
-  provisional - neither has been confirmed against a physical printout.
-  See `fixtures/label-templates/avery-5155/PRINT-TEST.md`.
+- **Physical print calibration for Avery 5155.** Structural DOCX generation
+  against the real interleaved-spacer-column source template is supported
+  and tested (see [Label templates](#label-templates)), but the seeded
+  `labelTextStyle`/`geometry` config (font sizes, safe insets, physical
+  label/pitch dimensions) is explicitly provisional - none of it has been
+  confirmed against a physical printout. See
+  `fixtures/label-templates/avery-5155/PRINT-TEST.md`.
 - **Spreadsheet mapping endpoint.** `parseWorkbook()` accepts an explicit
   `SpreadsheetMapping` for ambiguous workbooks, but there is no API route
   to submit one yet (`apps/api` TODO).

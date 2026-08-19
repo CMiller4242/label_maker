@@ -13,12 +13,12 @@ const templatesRoot = path.join(import.meta.dirname, "..", "..", "fixtures", "la
 
 // A test-only LabelTemplate, backed by a small controlled synthetic
 // fixed-grid .docx (see helpers/synthetic-fixed-grid-docx.ts) - NOT the
-// real Avery 5155 template. It exists to exercise the real DOCX generation
-// path end-to-end via the API, since the committed avery-5155 fixture is
-// currently not a valid Word document (see
-// packages/docx-renderer/src/README.md). Written under fixtures/label-templates
-// (the API's configured templates root) only for the duration of this test
-// file and removed in afterAll.
+// real Avery 5155 template. It exercises the real DOCX generation path
+// end-to-end via the API against a simple uniform grid (see
+// packages/docx-renderer/src/README.md); the real avery-5155 preset (an
+// interleaved-spacer-column grid) is exercised separately below. Written
+// under fixtures/label-templates (the API's configured templates root)
+// only for the duration of this test file and removed in afterAll.
 const SYNTHETIC_TEMPLATE_ID = "test-synthetic-fixed-grid";
 const SYNTHETIC_TEMPLATE_DIR = path.join(templatesRoot, SYNTHETIC_TEMPLATE_ID);
 const SYNTHETIC_TEMPLATE_STORAGE_KEY = `${SYNTHETIC_TEMPLATE_ID}/original.docx`;
@@ -232,7 +232,7 @@ describe("label-maker API integration", () => {
       expect(Buffer.from(downloadResponse.rawPayload)).toEqual(docxBuffer);
     });
 
-    it("returns a typed TEMPLATE_UNAVAILABLE error for avery-5155 (committed fixture is not a valid Word document)", async () => {
+    it("generates a real DOCX artifact for avery-5155's real interleaved-spacer-column source template", async () => {
       const response = await app.inject({
         method: "POST",
         url: "/label-runs",
@@ -242,8 +242,25 @@ describe("label-maker API integration", () => {
           copiesPerProduct: 8,
         },
       });
-      expect(response.statusCode).toBe(422);
-      expect(response.json().error.code).toBe("TEMPLATE_UNAVAILABLE");
+      expect(response.statusCode).toBe(201);
+      const body = response.json() as {
+        labelRun: { status: string; placementPlanJson: { totalPlacements: number; totalSheets: number } };
+        artifact: { storageKey: string; mimeType: string };
+      };
+      expect(body.labelRun.status).toBe("GENERATED");
+      expect(body.labelRun.placementPlanJson.totalPlacements).toBe(40); // 5 products x 8 copies
+      expect(body.labelRun.placementPlanJson.totalSheets).toBe(1);
+
+      // Re-open and confirm the real 7-column interleaved grid was cloned
+      // (not the synthetic fixture's 4-column grid) and only writable
+      // columns were filled.
+      const docxBuffer = await app.storage.read(body.artifact.storageKey);
+      const zip = await JSZip.loadAsync(docxBuffer);
+      const documentXml = await zip.file("word/document.xml")?.async("text");
+      expect(documentXml).toContain("SKU-1001");
+      expect(documentXml).toContain("$14.49");
+      expect(documentXml).toContain('<w:gridCol w:w="2520">');
+      expect(documentXml).toContain('<w:gridCol w:w="432">');
     });
 
     it("returns a typed UNSUPPORTED_RENDERING_MODE error for avery-22802 (FLOATING)", async () => {

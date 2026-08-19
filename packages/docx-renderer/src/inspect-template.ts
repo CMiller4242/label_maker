@@ -11,8 +11,10 @@ import {
   type XmlNode,
 } from "./ooxml.js";
 import type {
+  CellInspection,
   CellMarginInspection,
   DocxInspectionReport,
+  FixedGridPattern,
   FontSample,
   PageGeometry,
   ParagraphSample,
@@ -21,6 +23,7 @@ import type {
   TableClassificationInput,
   TablePositioning,
   TemplateClassification,
+  WritableCellMapping,
 } from "./types.js";
 
 function parseIntAttr(node: XmlNode | undefined, attr: string): number | null {
@@ -69,6 +72,27 @@ function inspectPageGeometry(documentTree: XmlNode[], warnings: string[]): PageG
   };
 }
 
+/** OOXML `<w:vMerge>` semantics: presence with no w:val (or val != "restart") means "continue" a merge started above. */
+function inspectCellVMerge(tcPr: XmlNode | undefined): CellInspection["vMerge"] {
+  if (!tcPr) return null;
+  const vMerge = firstDirectChild(childrenOf(tcPr), "w:vMerge");
+  if (!vMerge) return null;
+  return stringAttr(vMerge, "w:val") === "restart" ? "restart" : "continue";
+}
+
+function inspectCells(row: XmlNode): CellInspection[] {
+  const cellNodes = findDirectChildren(childrenOf(row), "w:tc");
+  return cellNodes.map((tc, cellIndex) => {
+    const tcPr = firstDirectChild(childrenOf(tc), "w:tcPr");
+    const tcW = tcPr ? firstDirectChild(childrenOf(tcPr), "w:tcW") : undefined;
+    return {
+      cellIndex,
+      widthTwips: parseIntAttr(tcW, "w:w"),
+      vMerge: inspectCellVMerge(tcPr),
+    };
+  });
+}
+
 function inspectRows(
   tableChildren: XmlNode[],
   tableIndex: number,
@@ -76,7 +100,8 @@ function inspectRows(
 ): RowInspection[] {
   const rowNodes = findDirectChildren(tableChildren, "w:tr");
   return rowNodes.map((row, rowIndex) => {
-    const cellCount = findDirectChildren(childrenOf(row), "w:tc").length;
+    const cells = inspectCells(row);
+    const cellCount = cells.length;
     const trPr = firstDirectChild(childrenOf(row), "w:trPr");
     const trHeight = trPr ? firstDirectChild(childrenOf(trPr), "w:trHeight") : undefined;
     const cantSplitNode = trPr ? firstDirectChild(childrenOf(trPr), "w:cantSplit") : undefined;
@@ -100,6 +125,7 @@ function inspectRows(
       heightTwips: parseIntAttr(trHeight, "w:val"),
       heightRule: stringAttr(trHeight, "w:hRule"),
       cantSplit,
+      cells,
     };
   });
 }
@@ -200,6 +226,174 @@ function inspectPositioning(tblPr: XmlNode | undefined): TablePositioning {
   };
 }
 
+/**
+ * Detects which fixed-grid pattern (if any) a table's rows/columns match:
+ *
+ * - SIMPLE: every raw grid column is a writable label column (no cell uses
+ *   `<w:vMerge>`).
+ * - INTERLEAVED_SPACER: an odd number of raw grid columns, alternating
+ *   wide (label) / narrow (spacer), where every spacer-position cell in
+ *   every row carries `<w:vMerge>` (down the table for horizontal pitch)
+ *   and no label-position cell does.
+ *
+ * Never guesses: any condition that fails is recorded in `diagnostics` and
+ * the function returns `pattern: null` rather than accepting a near-miss.
+ */
+function detectFixedGridPattern(
+  rows: RowInspection[],
+  gridColumnWidthsTwips: number[],
+): { pattern: FixedGridPattern | null; diagnostics: string[] } {
+  const diagnostics: string[] = [];
+
+  if (rows.length === 0) {
+    diagnostics.push("Table has no rows.");
+    return { pattern: null, diagnostics };
+  }
+
+  const rawColumnCounts = new Set(rows.map((r) => r.cellCount));
+  if (rawColumnCounts.size !== 1) {
+    diagnostics.push(
+      `Rows do not have a uniform cell count (found: ${[...rawColumnCounts].join(", ")}); cannot determine a consistent column layout.`,
+    );
+    return { pattern: null, diagnostics };
+  }
+  const rawColumns = rows[0]?.cellCount ?? 0;
+  if (rawColumns === 0) {
+    diagnostics.push("Rows have zero cells.");
+    return { pattern: null, diagnostics };
+  }
+
+  const anyVMerge = rows.some((r) => r.cells.some((c) => c.vMerge !== null));
+
+  // --- SIMPLE: no vertical merging anywhere - every raw column is writable. ---
+  if (!anyVMerge) {
+    if (gridColumnWidthsTwips.length !== rawColumns) {
+      diagnostics.push(
+        `<w:tblGrid> declares ${gridColumnWidthsTwips.length} column(s) but rows have ${rawColumns} cell(s) each.`,
+      );
+      return { pattern: null, diagnostics };
+    }
+    const writableCellMap: WritableCellMapping[] = [];
+    rows.forEach((row, rowIndex) => {
+      for (let col = 0; col < rawColumns; col++) {
+        writableCellMap.push({
+          logicalSlotIndex: rowIndex * rawColumns + col,
+          physicalRowIndex: rowIndex,
+          physicalCellIndex: col,
+        });
+      }
+    });
+    return {
+      pattern: {
+        patternType: "SIMPLE",
+        rawGridColumnWidthsTwips: gridColumnWidthsTwips,
+        logicalLabelColumnIndexes: Array.from({ length: rawColumns }, (_, i) => i),
+        spacerColumnIndexes: [],
+        logicalColumns: rawColumns,
+        logicalRows: rows.length,
+        writableCellMap,
+      },
+      diagnostics: [],
+    };
+  }
+
+  // --- INTERLEAVED_SPACER: odd raw column count, alternating wide/narrow,
+  // narrow (odd-position) columns vertically merged, wide (even-position)
+  // columns not. ---
+  if (rawColumns % 2 !== 1 || rawColumns < 3) {
+    diagnostics.push(
+      `Table uses vertical cell merging but has ${rawColumns} raw column(s) (even, or fewer than 3) - ` +
+        `the interleaved-spacer-column pattern requires an odd count >= 3 (label, spacer, label, ..., label).`,
+    );
+    return { pattern: null, diagnostics };
+  }
+
+  if (gridColumnWidthsTwips.length !== rawColumns) {
+    diagnostics.push(
+      `<w:tblGrid> declares ${gridColumnWidthsTwips.length} column(s) but rows have ${rawColumns} cell(s) each - cannot verify the wide/narrow pattern.`,
+    );
+    return { pattern: null, diagnostics };
+  }
+
+  const evenIndexes: number[] = [];
+  const oddIndexes: number[] = [];
+  for (let i = 0; i < rawColumns; i++) {
+    (i % 2 === 0 ? evenIndexes : oddIndexes).push(i);
+  }
+
+  const evenWidths = new Set(evenIndexes.map((i) => gridColumnWidthsTwips[i]));
+  const oddWidths = new Set(oddIndexes.map((i) => gridColumnWidthsTwips[i]));
+  if (evenWidths.size !== 1) {
+    diagnostics.push(
+      `Label (even-position) column widths are not uniform: ${[...evenWidths].join(", ")} twips.`,
+    );
+  }
+  if (oddWidths.size !== 1) {
+    diagnostics.push(
+      `Spacer (odd-position) column widths are not uniform: ${[...oddWidths].join(", ")} twips.`,
+    );
+  }
+  if (evenWidths.size === 1 && oddWidths.size === 1) {
+    const [evenWidth] = evenWidths;
+    const [oddWidth] = oddWidths;
+    if (evenWidth === undefined || oddWidth === undefined || !(oddWidth < evenWidth)) {
+      diagnostics.push(
+        `Expected narrower spacer columns (${oddWidth} twips) than label columns (${evenWidth} twips), but they are not narrower.`,
+      );
+    }
+  }
+
+  const mergeIssues: string[] = [];
+  rows.forEach((row, rowIndex) => {
+    for (const i of oddIndexes) {
+      const cell = row.cells[i];
+      if (!cell || cell.vMerge === null) {
+        mergeIssues.push(`row ${rowIndex} spacer column ${i} has no <w:vMerge>`);
+      }
+    }
+    for (const i of evenIndexes) {
+      const cell = row.cells[i];
+      if (cell && cell.vMerge !== null) {
+        mergeIssues.push(`row ${rowIndex} label column ${i} unexpectedly has <w:vMerge>`);
+      }
+    }
+  });
+  if (mergeIssues.length > 0) {
+    diagnostics.push(
+      `Vertical-merge pattern is inconsistent (expected spacer columns merged, label columns not): ` +
+        `${mergeIssues.slice(0, 5).join("; ")}${mergeIssues.length > 5 ? `; and ${mergeIssues.length - 5} more` : ""}.`,
+    );
+  }
+
+  if (diagnostics.length > 0) {
+    return { pattern: null, diagnostics };
+  }
+
+  const writableCellMap: WritableCellMapping[] = [];
+  rows.forEach((row, rowIndex) => {
+    evenIndexes.forEach((rawCol, logicalCol) => {
+      writableCellMap.push({
+        logicalSlotIndex: rowIndex * evenIndexes.length + logicalCol,
+        physicalRowIndex: rowIndex,
+        physicalCellIndex: rawCol,
+      });
+    });
+  });
+
+  return {
+    pattern: {
+      patternType: "INTERLEAVED_SPACER",
+      rawGridColumnWidthsTwips: gridColumnWidthsTwips,
+      logicalLabelColumnIndexes: evenIndexes,
+      spacerColumnIndexes: oddIndexes,
+      logicalColumns: evenIndexes.length,
+      logicalRows: rows.length,
+      writableCellMap,
+    },
+    diagnostics: [],
+  };
+}
+
 function inspectTable(table: XmlNode, tableIndex: number, warnings: string[]): TableInspection {
   const tableChildren = childrenOf(table);
   const tblPr = firstDirectChild(tableChildren, "w:tblPr");
@@ -225,6 +419,8 @@ function inspectTable(table: XmlNode, tableIndex: number, warnings: string[]): T
 
   const rows = inspectRows(tableChildren, tableIndex, warnings);
   const totalWritableCells = rows.reduce((sum, row) => sum + row.cellCount, 0);
+  const { pattern: fixedGridPattern, diagnostics: fixedGridPatternDiagnostics } =
+    detectFixedGridPattern(rows, gridColumnWidthsTwips);
 
   const firstRow = findDirectChildren(tableChildren, "w:tr")[0];
   const sampleCell = firstRow ? findDirectChildren(childrenOf(firstRow), "w:tc")[0] : undefined;
@@ -250,6 +446,8 @@ function inspectTable(table: XmlNode, tableIndex: number, warnings: string[]): T
     paragraphSample: inspectParagraphSample(sampleCell, tableIndex, warnings),
     fontSample: inspectFontSample(sampleCell, tableIndex, warnings),
     positioning: inspectPositioning(tblPr),
+    fixedGridPattern,
+    fixedGridPatternDiagnostics,
   };
 }
 
@@ -283,21 +481,19 @@ export function classifyTables(input: TableClassificationInput): {
   if (tables.length === 1 && inFlowTables.length === 1) {
     const table = inFlowTables[0];
     if (!table) return { classification: "AMBIGUOUS", confidence: 0, reasons: ["Internal error."] };
-    const uniformCellCounts = new Set(table.rows.map((r) => r.cellCount));
-    const columns = uniformCellCounts.size === 1 ? (table.rows[0]?.cellCount ?? 0) : 0;
-    const isUniformGrid = uniformCellCounts.size === 1 && columns > 0;
+    const pattern = table.fixedGridPattern;
 
     if (
-      isUniformGrid &&
-      table.rowCount === 15 &&
-      columns === 4 &&
-      table.totalWritableCells === 60
+      pattern &&
+      pattern.logicalRows === 15 &&
+      pattern.logicalColumns === 4 &&
+      pattern.writableCellMap.length === 60
     ) {
       let confidence = 0.7;
       if (table.isFixedLayout) confidence += 0.2;
       else reasons.push("Table layout is not explicitly fixed - Word may auto-fit column widths.");
-      if (table.gridColumnWidthsTwips.length === columns) confidence += 0.1;
-      else reasons.push("Grid column width count does not match column count.");
+      if (table.fixedGridPatternDiagnostics.length === 0) confidence += 0.1;
+      else reasons.push("Fixed-grid pattern detection reported diagnostics despite matching.");
       return {
         classification: "AVERY_5155_LIKE_FIXED_GRID",
         confidence: Math.min(confidence, 1),
@@ -305,10 +501,18 @@ export function classifyTables(input: TableClassificationInput): {
       };
     }
 
-    reasons.push(
-      `Single in-flow table has ${table.rowCount} rows / ${columns || "non-uniform"} columns / ` +
-        `${table.totalWritableCells} cells - does not match the expected 15x4/60-cell fixed grid.`,
-    );
+    if (pattern) {
+      reasons.push(
+        `Single in-flow table has ${pattern.logicalRows} logical rows / ${pattern.logicalColumns} logical ` +
+          `columns / ${pattern.writableCellMap.length} writable cells (pattern: ${pattern.patternType}) - ` +
+          `does not match the expected 15x4/60-cell fixed grid.`,
+      );
+    } else {
+      reasons.push(
+        `Single in-flow table with ${table.rowCount} rows does not match a recognized fixed-grid pattern: ` +
+          `${table.fixedGridPatternDiagnostics.join(" ")}`,
+      );
+    }
   }
 
   if (floatingTables.length > 0 && floatingTables.length === tables.length) {

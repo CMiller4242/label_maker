@@ -14,6 +14,7 @@
     "test": "vitest run",
     "dev": "pnpm --parallel -r --if-present run dev",
     "build": "pnpm -r --if-present run build",
+    "db:generate": "pnpm --filter @label-maker/database run prisma:generate",
     "db:migrate": "pnpm --filter @label-maker/database run migrate",
     "db:seed": "pnpm --filter @label-maker/database run seed",
     "fixtures:xlsx": "tsx scripts/create-xlsx-fixtures.ts"

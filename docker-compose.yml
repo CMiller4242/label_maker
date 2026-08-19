@@ -7,6 +7,8 @@ services:
       POSTGRES_PASSWORD: label_maker
       POSTGRES_DB: label_maker
     ports:
+      # Host 5433 -> container 5432: avoids conflicting with an existing
+      # local PostgreSQL instance already listening on host port 5432.
       - "5433:5432"
     volumes:
       - label_maker_postgres_data:/var/lib/postgresql/data

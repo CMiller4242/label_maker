@@ -32,6 +32,8 @@ export const createLabelRunRequestSchema = z.object({
   sourceDocumentId: z.string().uuid(),
   labelTemplateId: z.string().min(1),
   copiesPerProduct: z.number().int().positive(),
+  /** Also generate the optional debug JSON artifact alongside the primary DOCX. Defaults to false. */
+  includeDebugArtifact: z.boolean().default(false),
 });
 export type CreateLabelRunRequest = z.infer<typeof createLabelRunRequestSchema>;
 
@@ -43,17 +45,34 @@ export const labelRunSchema = z.object({
   status: labelRunStatusSchema,
   placementPlanJson: placementPlanSchema,
   generatedArtifactStorageKey: z.string().nullable(),
+  generatedArtifactSha256: z.string().nullable(),
+  templateVersion: z.string().nullable(),
+  templateSha256: z.string().nullable(),
+  sheetCount: z.number().int().nonnegative().nullable(),
+  filledSlotCount: z.number().int().nonnegative().nullable(),
+  emptySlotCount: z.number().int().nonnegative().nullable(),
+  metadataJson: z.unknown().nullable(),
   createdAt: z.coerce.date(),
   updatedAt: z.coerce.date(),
 });
 export type LabelRun = z.infer<typeof labelRunSchema>;
 
-/** Response for POST /label-runs */
+const generatedArtifactInfoSchema = z.object({
+  storageKey: z.string(),
+  byteSize: z.number().int().nonnegative(),
+  sha256: z.string(),
+  mimeType: z.string(),
+});
+
+/**
+ * Response for POST /label-runs. `artifact` is the primary generated
+ * output (a real DOCX for a validated FIXED_GRID template); `debugArtifact`
+ * is an optional secondary development-time JSON artifact, only present
+ * when explicitly requested.
+ */
 export const createLabelRunResponseSchema = z.object({
   labelRun: labelRunSchema,
-  debugArtifact: z.object({
-    storageKey: z.string(),
-    byteSize: z.number().int().nonnegative(),
-  }),
+  artifact: generatedArtifactInfoSchema,
+  debugArtifact: generatedArtifactInfoSchema.omit({ mimeType: true }).optional(),
 });
 export type CreateLabelRunResponse = z.infer<typeof createLabelRunResponseSchema>;

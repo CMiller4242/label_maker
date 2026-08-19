@@ -1,14 +1,11 @@
 import type { LabelTemplate, PlacementPlan } from "@label-maker/shared";
-import {
-  loadTemplateDocx as loadTemplateDocxFromBuffer,
-  validateTemplateLayout,
-} from "./template-loader.js";
+import { loadTemplateDocx, type TemplatePackage } from "./ooxml.js";
+import { validateTemplateLayout } from "./template-validation.js";
 import {
   DocxNotImplementedError,
   type LabelRenderer,
   type RenderResult,
   type TemplateLayoutValidationResult,
-  type TemplatePackage,
 } from "./types.js";
 
 export interface DebugPlacementEntry {
@@ -38,11 +35,11 @@ export interface DebugArtifact {
 }
 
 /**
- * Builds the structured debug JSON artifact for a placement plan: this is
- * the stand-in for real DOCX output until WordprocessingML rendering is
- * implemented (see README.md). It captures every field a real renderer
- * would need (sheet, slot, row, column, product fields, template id) so
- * downstream consumers/tests can assert on placement correctness today.
+ * Builds the structured debug JSON artifact for a placement plan. Useful as
+ * an optional development-time output alongside (or instead of) a real
+ * DOCX, since it captures every field a renderer would need (sheet, slot,
+ * row, column, product fields, template id) in a format that's trivial to
+ * diff in tests and code review.
  */
 export function buildDebugArtifact(plan: PlacementPlan, template: LabelTemplate): DebugArtifact {
   return {
@@ -81,12 +78,11 @@ export function renderDebugJsonArtifact(
 }
 
 /**
- * LabelRenderer implementation backing this milestone: template
- * loading/validation are implemented against real .docx bytes when given
- * (see template-loader.ts), but actual DOCX rendering
- * (renderFixedGridDocx/renderFloatingDocx) is intentionally not
- * implemented yet - callers needing an artifact today should call
- * renderDebugJsonArtifact() directly instead.
+ * A LabelRenderer implementation that only ever produces the debug JSON
+ * artifact - its renderFixedGridDocx/renderFloatingDocx methods always
+ * throw. Use the standalone renderFixedGridDocx() from
+ * fixed-grid-renderer.ts directly for real DOCX output; this class exists
+ * for callers that want the debug-only artifact behind the same interface.
  */
 export class DebugJsonRenderer implements LabelRenderer {
   private readonly readTemplateBytes: (templateStorageKey: string) => Promise<Buffer>;
@@ -97,7 +93,7 @@ export class DebugJsonRenderer implements LabelRenderer {
 
   async loadTemplateDocx(templateStorageKey: string): Promise<TemplatePackage> {
     const buffer = await this.readTemplateBytes(templateStorageKey);
-    return loadTemplateDocxFromBuffer(templateStorageKey, buffer);
+    return loadTemplateDocx(buffer, templateStorageKey);
   }
 
   validateTemplateLayout(
@@ -108,10 +104,10 @@ export class DebugJsonRenderer implements LabelRenderer {
   }
 
   renderFixedGridDocx(_plan: PlacementPlan, _template: LabelTemplate): Promise<RenderResult> {
-    throw new DocxNotImplementedError("renderFixedGridDocx");
+    throw new DocxNotImplementedError("DebugJsonRenderer.renderFixedGridDocx");
   }
 
   renderFloatingDocx(_plan: PlacementPlan, _template: LabelTemplate): Promise<RenderResult> {
-    throw new DocxNotImplementedError("renderFloatingDocx");
+    throw new DocxNotImplementedError("DebugJsonRenderer.renderFloatingDocx");
   }
 }

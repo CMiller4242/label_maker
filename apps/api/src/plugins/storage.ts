@@ -1,11 +1,12 @@
 import fp from "fastify-plugin";
 import type { FastifyInstance } from "fastify";
-import { LocalStorageService } from "@label-maker/storage";
+import { LocalStorageService, TemplateFileStorage } from "@label-maker/storage";
 import type { AppConfig } from "../config.js";
 
 declare module "fastify" {
   interface FastifyInstance {
     storage: LocalStorageService;
+    templates: TemplateFileStorage;
     config: AppConfig;
   }
 }
@@ -20,6 +21,9 @@ export default fp(async function storagePlugin(
   });
   await storage.ensureDirectories();
 
+  const templates = new TemplateFileStorage(opts.config.templatesRootDir);
+
   fastify.decorate("config", opts.config);
   fastify.decorate("storage", storage);
+  fastify.decorate("templates", templates);
 });

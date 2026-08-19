@@ -1,6 +1,9 @@
 # PDF fixtures
 
-No PDF fixtures are committed yet. `packages/ingestion`'s `parsePdf()` is
+No PDF fixtures are committed yet, and none should be added for the
+Woodhull product deck specifically: it is real customer data, meant to be
+uploaded through the running application (`POST /uploads`) to validate
+parsing, never committed to this repository. `packages/ingestion`'s `parsePdf()` is
 exercised today only by unit tests that construct minimal PDF byte streams
 or that stub `pdfjs-dist`, since hand-authoring a realistic product-deck PDF
 is out of scope for this backend scaffold.

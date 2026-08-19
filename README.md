@@ -2,10 +2,13 @@
 
 Backend-first foundation for a label-generation application. This is a
 pnpm/TypeScript monorepo that ingests a product deck (PDF/CSV/XLSX/XLS),
-normalizes product data into a human-reviewable list, and builds
-deterministic label-placement plans for Avery-style label sheets. DOCX is
-the canonical print export format, but real DOCX rendering is **not**
-implemented yet - see "What's implemented vs. stubbed" below.
+normalizes product data into a human-reviewable list, builds deterministic
+label-placement plans, and renders real DOCX label sheets for Avery-style
+templates. DOCX is the canonical print export format. **Real DOCX
+generation is implemented and structurally tested for the Avery 5155
+(fixed-grid) preset**; Avery 22802 (floating/tag-style) is inspected and
+registered but DOCX export for it is intentionally not implemented yet -
+see [Label templates](#label-templates) below.
 
 ## Repository layout
 
@@ -18,10 +21,11 @@ packages/
   shared/        Zod schemas + types shared by api/worker
   ingestion/     CSV/XLSX/XLS/PDF parsing, header normalization, price normalization
   label-layout/  Deterministic label placement engine
-  docx-renderer/ Renderer interfaces + stub debug-JSON renderer
-  storage/       Local disk storage (uploads/artifacts)
-fixtures/        Sample CSV/XLSX fixtures used by tests
-tests/           Unit tests (ingestion, label-layout) + API integration tests
+  docx-renderer/ DOCX inspection, fixed-grid validation, and real DOCX rendering
+  storage/       Local disk storage (uploads/artifacts) + template file storage
+fixtures/        Sample CSV/XLSX fixtures + committed label template .docx files
+scripts/         Dev CLIs (fixture generation, DOCX template inspection)
+tests/           Unit tests (ingestion, label-layout, docx-renderer) + API integration tests
 ```
 
 ## Prerequisites
@@ -86,24 +90,31 @@ curl http://localhost:3000/documents/<documentId>/products
 curl -X POST http://localhost:3000/label-runs \
   -H "content-type: application/json" \
   -d '{"sourceDocumentId":"<documentId>","labelTemplateId":"avery-5155","copiesPerProduct":8}'
+# -> {"labelRun":{...},"artifact":{"storageKey":"artifacts/....docx",...}}
+# (as committed today, avery-5155's source .docx is invalid - see "Label
+# templates" below - so this currently returns a 422 TEMPLATE_UNAVAILABLE
+# error until a real Avery 5155 template file is committed)
+
+curl -o label-run.docx http://localhost:3000/label-runs/<labelRunId>/download
 ```
 
 ## Scripts
 
 Run from the repo root (these fan out to workspace packages via pnpm `-r`):
 
-| Script | What it does |
-| --- | --- |
-| `pnpm lint` | ESLint across the whole repo |
-| `pnpm format` / `pnpm format:write` | Prettier check / write |
-| `pnpm typecheck` | `tsc --noEmit` in every package/app |
-| `pnpm test` | Vitest workspace (unit + integration tests) |
-| `pnpm build` | `tsc` build in every package/app |
-| `pnpm dev` | Runs every package/app's `dev` script in parallel |
-| `pnpm db:generate` | `prisma generate` (packages/database) |
-| `pnpm db:migrate` | `prisma migrate deploy` (packages/database) |
-| `pnpm db:seed` | Seeds the `avery-5155` LabelTemplate preset |
-| `pnpm fixtures:xlsx` | Regenerates `fixtures/xlsx/products-two-sheets.xlsx` |
+| Script                              | What it does                                                                                                                                                      |
+| ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm lint`                         | ESLint across the whole repo                                                                                                                                      |
+| `pnpm format` / `pnpm format:write` | Prettier check / write                                                                                                                                            |
+| `pnpm typecheck`                    | `tsc --noEmit` in every package/app                                                                                                                               |
+| `pnpm test`                         | Vitest workspace (unit + integration tests)                                                                                                                       |
+| `pnpm build`                        | `tsc` build in every package/app                                                                                                                                  |
+| `pnpm dev`                          | Runs every package/app's `dev` script in parallel                                                                                                                 |
+| `pnpm db:generate`                  | `prisma generate` (packages/database)                                                                                                                             |
+| `pnpm db:migrate`                   | `prisma migrate deploy` (packages/database)                                                                                                                       |
+| `pnpm db:seed`                      | Seeds the `avery-5155` LabelTemplate preset                                                                                                                       |
+| `pnpm fixtures:xlsx`                | Regenerates `fixtures/xlsx/products-two-sheets.xlsx`                                                                                                              |
+| `pnpm inspect:docx`                 | Inspects the committed label template `.docx` files (or any path(s) passed as args) and prints a structural JSON report - see [Label templates](#label-templates) |
 
 ### Running tests without Docker
 
@@ -115,9 +126,77 @@ works - just make sure `DATABASE_URL`/`REDIS_URL` in `.env` point at them
 clashing with a Postgres already on 5432), then run
 `pnpm db:generate && pnpm db:migrate && pnpm db:seed` before `pnpm test`.
 
+## Label templates
+
+Two Avery presets are registered (seeded by `packages/database/prisma/seed.ts`,
+which inspects their source `.docx` files at seed time):
+
+| Template                    | `renderingMode`                                      | DOCX export                                                                               | Source file                                          |
+| --------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| Avery 5155 (`avery-5155`)   | `FIXED_GRID` (4 columns x 15 rows = 60 labels/sheet) | **Supported** for a valid source template - see the caveat below                          | `fixtures/label-templates/avery-5155/original.docx`  |
+| Avery 22802 (`avery-22802`) | `FLOATING` (8 independently-positioned tables)       | **Not supported** - `POST /label-runs` returns a typed `UNSUPPORTED_RENDERING_MODE` error | `fixtures/label-templates/avery-22802/original.docx` |
+
+**Important caveat:** the committed `fixtures/label-templates/avery-5155/original.docx`
+is currently **not a valid Word document** - opening it shows it has no
+`word/document.xml` part; it appears to be an Office theme (`.thmx`)
+package committed under the wrong name. `POST /label-runs` against
+`avery-5155` will return a `422 TEMPLATE_UNAVAILABLE` error until a real
+Avery 5155 template file replaces it. The DOCX rendering code itself is
+complete and is exercised end-to-end in `tests/docx-renderer/` and
+`tests/integration/` against a small controlled synthetic fixed-grid
+`.docx` built purely for testing - never presented as the real template.
+See `packages/docx-renderer/src/README.md` for the full explanation.
+
+### Running template inspection
+
+```bash
+pnpm exec tsx scripts/inspect-docx-template.ts
+# inspects both committed fixtures by default; pass file path(s) to inspect others
+```
+
+This opens a `.docx` directly via JSZip + XML parsing (no Microsoft Word or
+office suite required) and prints page geometry, every table's
+layout/grid/row/cell/font/paragraph properties, writable cell counts, and a
+best-effort classification (`AVERY_5155_LIKE_FIXED_GRID` /
+`AVERY_22802_LIKE_FLOATING` / `AMBIGUOUS`) with explicit warnings for
+missing or ambiguous metadata.
+
+### Creating a label run and downloading the DOCX
+
+```bash
+# 1. Create the run (only APPROVED/AUTO_ACCEPTED, included products are used)
+curl -X POST http://localhost:3000/label-runs \
+  -H "content-type: application/json" \
+  -d '{"sourceDocumentId":"<documentId>","labelTemplateId":"avery-5155","copiesPerProduct":8}'
+# -> 201 { "labelRun": {...}, "artifact": { "storageKey": "...", "sha256": "...", "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document" } }
+# -> 422 TEMPLATE_UNAVAILABLE today for avery-5155 (see the caveat above)
+# -> 422 UNSUPPORTED_RENDERING_MODE for avery-22802 (FLOATING export not implemented)
+
+# 2. Download the generated artifact
+curl -o label-run.docx http://localhost:3000/label-runs/<labelRunId>/download
+```
+
+Pass `"includeDebugArtifact": true` in the request body to also generate
+the optional secondary debug-JSON artifact (sheet/slot/row/column/product
+fields as JSON) alongside the primary DOCX - useful for debugging
+placement logic without opening Word.
+
+### Manual print validation
+
+Structural DOCX validity (table shape, fixed layout, row heights,
+`cantSplit`, expected text content) is checked in CI. **Physical print
+accuracy on a real Avery 5155 sheet is not** - that requires a human,
+a real printer, and real label stock. See
+`fixtures/label-templates/avery-5155/PRINT-TEST.md` for the full manual
+acceptance procedure (open in Word, print at Actual Size/100%, overlay
+against a real sheet, check all four corners plus center, record the
+result). **This manual test has not been performed for this milestone -
+do not treat any part of this repository as claiming print accuracy.**
+
 ## What's implemented vs. stubbed
 
 **Implemented:**
+
 - File type detection (extension + MIME + magic bytes), CSV parsing
   (`csv-parse`), XLSX/XLS parsing (SheetJS), native PDF text extraction
   (`pdfjs-dist`) with generic SKU/price/"AS LOW AS" candidate discovery.
@@ -127,29 +206,48 @@ clashing with a Postgres already on 5432), then run
 - A deterministic label placement engine (left-to-right, top-to-bottom,
   continuous global index across sheets) with full unit test coverage.
 - A Fastify API (`/health`, `/uploads`, `/jobs/:jobId`,
-  `/documents/:documentId/products`, `/label-runs`, `/label-templates`) and
-  a BullMQ worker that ingests documents and persists raw extraction
-  candidates separately from reviewable `Product` records.
+  `/documents/:documentId/products`, `/label-runs`,
+  `/label-runs/:labelRunId/download`, `/label-templates`) and a BullMQ
+  worker that ingests documents and persists raw extraction candidates
+  separately from reviewable `Product` records.
 - Local disk storage with server-generated file names (no path traversal
-  from user-supplied filenames).
+  from user-supplied filenames), plus a read-only template file storage
+  abstraction for source `.docx` templates.
+- **Real DOCX generation for FIXED_GRID templates** (`renderFixedGridDocx()`):
+  clones the validated source grid table per sheet, fills 3 lines of label
+  text per cell from a configurable style, enforces fixed table
+  layout/exact row heights/`cantSplit`, and inserts page breaks only
+  between complete sheets - all structurally tested in
+  `tests/docx-renderer/`. See [Label templates](#label-templates) for the
+  current caveat about the committed Avery 5155 source file.
+- DOCX template inspection (`inspectDocxTemplate()`, `scripts/inspect-docx-template.ts`)
+  that opens `.docx` packages directly via JSZip + XML parsing (no Word/
+  office suite required) and reports page/table/row/cell/font geometry plus
+  a best-effort fixed-grid-vs-floating classification.
 
 **Explicitly stubbed / not implemented (by design, see task scope):**
-- **Real DOCX rendering.** `packages/docx-renderer` defines the renderer
-  interface and ships a working debug-JSON renderer; `renderFixedGridDocx()`
-  and `renderFloatingDocx()` throw `DocxNotImplementedError`. See
-  `packages/docx-renderer/src/README.md` for the planned WordprocessingML
-  strategy.
+
+- **Floating/tag-style DOCX rendering** (Avery 22802 and similar).
+  `renderFloatingDocx()` always throws `UnsupportedFloatingTemplateError` -
+  it never produces partial or malformed output. See
+  `packages/docx-renderer/src/README.md`.
 - **OCR.** There is no OCR provider implementation. PDF pages with low
   native text density are flagged `needsReview` with
   `suggestedFutureExtractionMethod: "OCR_REQUIRED"`, but nothing runs OCR.
 - **LLM-based extraction.** Not used anywhere, and not required for
   standard parsing per the project's design constraints.
-- **Verified Avery 5155 geometry.** The seeded `LabelTemplate.configJson`
-  geometry fields are structural placeholders, not measured values - see
-  the comments in `packages/database/prisma/seed.ts`.
+- **Verified Avery 5155 physical geometry.** The committed
+  `fixtures/label-templates/avery-5155/original.docx` is not currently a
+  valid Word document (see [Label templates](#label-templates)), and the
+  seeded `labelTextStyle`/`geometry` config is explicitly provisional -
+  neither has been confirmed against a physical printout. See
+  `fixtures/label-templates/avery-5155/PRINT-TEST.md`.
 - **Spreadsheet mapping endpoint.** `parseWorkbook()` accepts an explicit
   `SpreadsheetMapping` for ambiguous workbooks, but there is no API route
   to submit one yet (`apps/api` TODO).
+- **The Woodhull product deck.** Not included in this repository (real
+  customer data) and not used by any test - see
+  [Sensitive documents](#sensitive-documents) below.
 
 ## Architecture notes
 
@@ -175,3 +273,14 @@ clashing with a Postgres already on 5432), then run
   `build-label-run` processor for the same operation, for future use if
   label-run generation needs to move off the request path (e.g. very large
   runs).
+
+## Sensitive documents
+
+Do not commit real product deck PDFs or other customer-supplied source
+documents to this repository. The Woodhull product deck referenced in this
+project's task history is one such document: it is a PDF meant to be
+**uploaded through the running application** (via `POST /uploads`) to
+exercise/validate PDF parsing, never added to git. All fixtures under
+`fixtures/` are either synthetic (`fixtures/csv/`, `fixtures/xlsx/`) or, for
+`fixtures/label-templates/`, label template files with no product/customer
+data in them.

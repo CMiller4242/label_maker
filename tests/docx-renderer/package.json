@@ -1,0 +1,13 @@
+{
+  "name": "@label-maker/tests-docx-renderer",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "@label-maker/docx-renderer": "workspace:*",
+    "@label-maker/label-layout": "workspace:*",
+    "@label-maker/shared": "workspace:*",
+    "fast-xml-parser": "^4.5.1",
+    "jszip": "^3.10.1",
+    "vitest": "^2.1.8"
+  }
+}

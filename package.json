@@ -17,10 +17,12 @@
     "db:generate": "pnpm --filter @label-maker/database run prisma:generate",
     "db:migrate": "pnpm --filter @label-maker/database run migrate",
     "db:seed": "pnpm --filter @label-maker/database run seed",
-    "fixtures:xlsx": "tsx scripts/create-xlsx-fixtures.ts"
+    "fixtures:xlsx": "tsx scripts/create-xlsx-fixtures.ts",
+    "inspect:docx": "tsx scripts/inspect-docx-template.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.18.0",
+    "@label-maker/docx-renderer": "workspace:*",
     "@types/node": "^22.10.5",
     "@typescript-eslint/eslint-plugin": "^8.19.1",
     "@typescript-eslint/parser": "^8.19.1",

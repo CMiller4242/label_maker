@@ -1,107 +1,160 @@
 # docx-renderer
 
-This package is the boundary between a deterministic `PlacementPlan` (from
-`@label-maker/label-layout`) and a printed sheet of labels. **Today it does
-not produce a real `.docx` file.** It defines the renderer interface every
-future implementation must satisfy, a template loader/validator that works
-against real `.docx` bytes once a verified template exists, and a working
-stub renderer (`renderDebugJsonArtifact`) that writes a structured JSON
-artifact describing exactly what a real renderer would need to draw.
+Turns a deterministic `PlacementPlan` (from `@label-maker/label-layout`) into
+a printable artifact. DOCX is the canonical export format for this
+application, because labels are printed from Microsoft Word.
 
-`renderFixedGridDocx()` and `renderFloatingDocx()` both throw
-`DocxNotImplementedError` right now. Do not treat their presence as a claim
-that print output has been validated - it has not. Producing correct,
-print-accurate `.docx` output is the next milestone, not part of this
-scaffold.
+**Current support status:**
 
-## Why DOCX at all
+| Template    | Rendering mode | DOCX export                                                                                                                                      |
+| ----------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Avery 5155  | `FIXED_GRID`   | **Supported** - real, valid `.docx` generation implemented and structurally tested (see below for the caveat about the committed source fixture) |
+| Avery 22802 | `FLOATING`     | **Not supported** - inspected and registered, but `renderFloatingDocx()` always throws `UnsupportedFloatingTemplateError`                        |
 
-Labels in this workflow are printed from Microsoft Word, not from a PDF
-export pipeline. That makes `.docx` the canonical export format: whatever
-this package eventually produces must open and print correctly in Word
-without the user manually fixing table layout, fonts, or margins.
+The optional debug-JSON renderer (`renderDebugJsonArtifact`) still exists
+and can be used as a secondary, development-time output for either
+template - it never claims to be a real DOCX.
 
-## Planned rendering strategy
+## Important caveat: the committed Avery 5155 fixture is not a valid Word document
 
-### Standard (FIXED_GRID) labels - e.g. Avery 5155
+`fixtures/label-templates/avery-5155/original.docx` currently only contains
+`[Content_Types].xml`, `_rels/.rels`, and `theme/theme/*` parts - **no
+`word/document.xml`**. Its `_rels/.rels` points at
+`theme/theme/themeManager.xml`, which is the structure of an Office _theme_
+package (`.thmx`), not a Word document. Run
+`pnpm exec tsx scripts/inspect-docx-template.ts` to see this for yourself;
+the inspector reports `tableCount: 0`, `classification: "AMBIGUOUS"`, and an
+explicit warning naming the missing part.
 
-- Standard label sheets are rendered by **cloning a fixed-grid Word table**
-  out of a **verified source template** (a real `.docx`/`.dotx` file whose
-  geometry has been measured against a physical printed sheet - see
-  `fixtures/label-templates/README.md`). We do not generate table geometry
-  from scratch; we clone rows/cells from a template that is already known to
-  align with the physical label stock.
-- Each table **row must use an exact height** (`w:trHeight` with
-  `w:hRule="exact"`), not `"atLeast"`. Word's default "at least" behavior
-  lets row heights grow with content, which silently shifts every label
-  below it out of alignment with the physical sheet - unacceptable for a
-  print-accuracy-critical workflow.
-- Tables **must use fixed layout** (`<w:tblLayout w:type="fixed"/>`) and must
-  **never auto-fit**. Autofit recalculates column widths from cell content,
-  which is exactly what fixed-grid label printing cannot tolerate.
-  `validateTemplateLayout()` will be extended to assert this before any
-  render proceeds.
-- Every cell must declare **explicit margins** (`w:tcMar`) and **explicit
-  paragraph spacing** (`w:spacing` with `w:before`/`w:after` pinned, not
-  inherited from a Normal style that could change). Implicit/inherited
-  spacing is the single most common cause of "it looked right in the
-  preview but printed one line off."
-- The generator may insert a **page break only between complete sheet
-  tables** - i.e. once every slot on a sheet has been filled (or left
-  intentionally blank per `PlacementResult.unfilledSlots`), not between
-  individual products or rows. This mirrors `build-placements.ts`, which
-  deliberately does not force a page break per product.
-- Implementation sketch (not yet built): `loadTemplateDocx()` opens the
-  verified template via JSZip, `validateTemplateLayout()` confirms its
-  `<w:tbl>` structure matches `LabelTemplate.rows`/`columns`, and
-  `renderFixedGridDocx()` will clone the table's row/cell XML
-  `labelsPerSheet` times per sheet, filling each cell's text runs from the
-  corresponding `Placement`, then reassembling `word/document.xml` inside
-  the zip and writing the modified package back out.
+Practical effect: `renderFixedGridDocx()` will throw
+`InvalidFixedGridTemplateError` against the committed fixture today, because
+`loadTemplateDocx()`/`validateFixedGridTemplate()` correctly refuse to treat
+a non-Word-document as a usable template. **The renderer code itself is
+complete and works against a real, valid Avery 5155 `.docx`** containing a
+normal in-flow, fixed-layout table of exactly 4 columns × 15 rows (60
+cells) - this package's DOCX-generation tests exercise that exact path
+against a small, controlled, hand-authored fixed-grid `.docx` fixture built
+purely for structural testing (never claimed to be the real Avery 5155
+template, and never derived from any product deck). Until a real Avery 5155
+source template is committed to `fixtures/label-templates/avery-5155/`,
+end-to-end rendering against the "real" fixture will fail loudly and
+correctly, rather than silently producing garbage.
 
-### Floating templates
+## Rendering strategy
 
-- Some label stock (and some proof-sheet workflows) do not use a uniform
-  grid - tags/labels are positioned freely on the page (floating text boxes
-  or absolutely-positioned frames rather than table cells).
-- `renderFloatingDocx()` is a **separate implementation path** from the
-  fixed-grid renderer, not a generalization of it. Floating placement in
-  OOXML uses drawing anchors (`<w:drawing>`/`wp:anchor`) with explicit
-  x/y offsets rather than table rows, so the geometry model, validation
-  rules, and template requirements are different enough that sharing code
-  with the fixed-grid path would obscure both.
-- Floating templates **must be authored and print-tested directly in
-  Microsoft Word** before being wired up here - there is no physical-sheet
-  fallback the way there is for a standard Avery grid, so an unverified
-  floating template has no ground truth to check placement against.
+### Fixed-grid labels (Avery 5155)
 
-## What exists today
+- `renderFixedGridDocx()` starts from a **byte-for-byte JSZip copy** of the
+  source template and only ever rewrites `word/document.xml`. Every other
+  package part (styles, theme, fonts, settings, relationships, media) is
+  preserved untouched.
+- `validateFixedGridTemplate()` is a strict, throwing gate: it requires
+  exactly one normal in-flow table with the expected `columns x rows =
+labelsPerSheet` shape, `<w:tblLayout w:type="fixed"/>`, and an explicit
+  `<w:tblGrid>` with one `<w:gridCol>` per column. `renderFixedGridDocx()`
+  never runs against a template that fails this check.
+- The single validated table is **cloned once per sheet** (via
+  `structuredClone` on the parsed XML node tree - see `ooxml.ts`). Every
+  cell without a placement for that sheet+slot is left exactly as cloned
+  from the source (blank), per the placement plan's `unfilledSlots`.
+- Every row's `<w:trPr>` is rewritten to guarantee `<w:cantSplit/>` is
+  present, and to force `w:hRule="exact"` on `<w:trHeight>` **when a height
+  is known from the source** - preserving the source's physical height
+  number, never fabricating one. If a row has no height information at
+  all, the renderer leaves it absent (see "no hardcoded physical
+  measurements" below) rather than guessing.
+- Exactly one explicit Word page break (`<w:br w:type="page"/>` inside its
+  own paragraph) is inserted **between** completed sheet tables - never
+  after the last one, and never once per product. This matches
+  `@label-maker/label-layout`'s placement engine, which also never forces a
+  break per product.
+- The document's original `<w:sectPr>` (page size/margins/section
+  properties) is preserved verbatim as the final body element - physical
+  page geometry always comes from the source template, never from
+  hardcoded values in this package.
 
-- `types.ts` - the `LabelRenderer` interface (`loadTemplateDocx`,
-  `validateTemplateLayout`, `renderFixedGridDocx`, `renderFloatingDocx`),
-  `TemplatePackage`, and `DocxNotImplementedError`.
-- `template-loader.ts` - opens a real `.docx` zip package with JSZip and
-  extracts `word/document.xml`; `validateTemplateLayout()` currently only
-  checks that a `<w:tbl>` element exists for `FIXED_GRID` templates. The
-  deeper checks described above (exact row heights, fixed table layout,
-  explicit cell margins) are TODOs.
-- `debug-json-renderer.ts` - `renderDebugJsonArtifact()` is the renderer
-  actually used by `apps/worker`'s `build-label-run` processor today. It
-  writes every `Placement` (sheet, slot, row, column, product fields) plus
-  the intended `labelTemplateId` as JSON. `DebugJsonRenderer` implements the
-  full `LabelRenderer` interface, but its `renderFixedGridDocx`/
-  `renderFloatingDocx` methods throw `DocxNotImplementedError` - they exist
-  so calling code can already be written against the stable interface.
+### Cell content
 
-## TODOs for the DOCX milestone
+Each filled cell gets exactly 3 paragraphs, replacing whatever was in the
+cell before (no leftover blank/default paragraph is left before the label
+content):
 
-- [ ] Acquire/measure a verified Avery 5155 physical template; replace the
-      placeholder `configJson.geometry` values in the seed data.
-- [ ] Implement `renderFixedGridDocx()`: clone table rows/cells from the
-      verified template, fill text runs, reassemble `document.xml`.
-- [ ] Extend `validateTemplateLayout()` with the fixed-layout/exact-row-
-      height/explicit-margin checks described above.
-- [ ] Implement a floating-template authoring workflow and
-      `renderFloatingDocx()`, tested by printing from Word.
-- [ ] Add print-accuracy regression tests (e.g. rendering a known plan and
-      diffing the produced `document.xml` table geometry).
+1. SKU
+2. Description
+3. `As Low As: $X.XX` (formatted from integer cents only - see
+   `formatCentsAsDollars()` - never floating point)
+
+Every stylistic property - font family, per-line font size, boldness,
+color, horizontal/vertical alignment, line spacing, paragraph
+spacing-before/after (zero by default), and optional safe insets
+(cell-margin override) - comes from `LabelTemplate.configJson.labelTextStyle`
+(validated by `labelTextStyleConfigSchema` in `types.ts`), never from magic
+numbers scattered in renderer code. The initial values seeded for Avery
+5155 are explicitly marked provisional (see the seed script and
+`PRINT-TEST.md`) - they have not been confirmed against a physical
+printout.
+
+### No hardcoded physical measurements
+
+This package never invents page/label/margin dimensions. Where the source
+template has explicit values (row heights, column widths, cell margins,
+page size), they are preserved. Where they're absent or the source is
+unusable (as with the current Avery 5155 fixture), the renderer either
+leaves that specific property unset (for non-critical row-height overrides)
+or refuses to render at all (via `validateFixedGridTemplate()`), rather
+than substituting an invented number that might silently conflict with the
+real physical sheet.
+
+### Floating/tag templates (Avery 22802)
+
+- Avery 22802's real, valid source `.docx` was inspected: 8 separate
+  tables, each carrying `<w:tblpPr>` (floating/anchored positioning), not
+  one unified grid. This is registered as `renderingMode: "FLOATING"`.
+- `renderFloatingDocx()` **always throws `UnsupportedFloatingTemplateError`**
+  (or `DocxNotImplementedError` if called against a non-FLOATING template
+  by mistake). It never produces partial or malformed output. Floating
+  layout uses a fundamentally different geometry model (absolute
+  page-anchored positions rather than table rows), so implementing it is
+  future work, not a variant of the fixed-grid path.
+
+## What exists in this package
+
+- `ooxml.ts` - label-agnostic WordprocessingML/OOXML plumbing: JSZip
+  package loading (`loadTemplateDocx`), XML parsing/serialization via
+  `fast-xml-parser`'s order-preserving mode, node-tree accessor/builder
+  helpers, and unit conversions (twips/points/half-points).
+- `inspect-template.ts` - `inspectDocxTemplate()` (and the reusable
+  `inspectLoadedTemplate()`): produces a full structural report - page
+  geometry, every table's layout/grid/row/cell/font/paragraph properties,
+  writable cell counts, and a best-effort classification
+  (`AVERY_5155_LIKE_FIXED_GRID` / `AVERY_22802_LIKE_FLOATING` /
+  `AMBIGUOUS`) with explicit warnings for missing/ambiguous metadata.
+- `template-validation.ts` - `validateFixedGridTemplate()` (strict,
+  throwing) and `validateTemplateLayout()` (non-throwing adapter matching
+  the `LabelRenderer` interface).
+- `fixed-grid-renderer.ts` - `renderFixedGridDocx()` (real DOCX
+  generation) and `renderFloatingDocx()` (always throws).
+- `debug-json-renderer.ts` - the pre-existing debug JSON artifact
+  generator (`renderDebugJsonArtifact`) and a `DebugJsonRenderer` class
+  implementing the `LabelRenderer` interface for the debug-only path.
+- `types.ts` - all shared types/errors/zod schemas:
+  `DocxInspectionReport` and its sub-types, `LabelRenderer`, `RenderResult`,
+  `labelTextStyleConfigSchema`, and the typed errors
+  (`InvalidFixedGridTemplateError`, `UnsupportedFloatingTemplateError`,
+  `MissingLabelTextStyleConfigError`, `DocxNotImplementedError`).
+
+## TODOs
+
+- [ ] Replace `fixtures/label-templates/avery-5155/original.docx` with a
+      real, valid Avery 5155 Word template (see the caveat above), then
+      re-run `pnpm exec tsx scripts/inspect-docx-template.ts` and update the
+      seed's `geometry`/`labelTextStyle` from actual measurements.
+- [ ] Complete `fixtures/label-templates/avery-5155/PRINT-TEST.md`'s manual
+      acceptance procedure once a real template exists.
+- [ ] Design and implement `renderFloatingDocx()` for Avery 22802 - a
+      separate geometry model (page-anchored absolute positioning) from the
+      fixed-grid path, tested by printing from Word.
+- [ ] Consider extending `validateFixedGridTemplate()`/inspection to sample
+      more than one cell per table (currently only the first row/cell is
+      sampled for font/paragraph/margin properties), if real templates turn
+      out to have inconsistent per-cell formatting worth catching.

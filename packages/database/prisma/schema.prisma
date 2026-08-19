@@ -72,7 +72,7 @@ enum LabelRunStatus {
 }
 
 model SourceDocument {
-  id               String                   @id @default(uuid())
+  id               String                  @id @default(uuid())
   originalFilename String
   mimeType         String
   extension        SourceDocumentExtension
@@ -80,7 +80,7 @@ model SourceDocument {
   byteSize         Int
   sha256           String
   pageCount        Int?
-  createdAt        DateTime                 @default(now())
+  createdAt        DateTime                @default(now())
 
   processingJobs ProcessingJob[]
   sourcePages    SourcePage[]
@@ -109,15 +109,15 @@ model ProcessingJob {
 }
 
 model SourcePage {
-  id                    String            @id @default(uuid())
-  sourceDocumentId      String
-  sourceDocument        SourceDocument    @relation(fields: [sourceDocumentId], references: [id], onDelete: Cascade)
-  pageNumber            Int
-  extractionMethod      ExtractionMethod
-  rawText               String?
-  extractionConfidence  Float
-  needsReview           Boolean           @default(false)
-  createdAt             DateTime          @default(now())
+  id                   String           @id @default(uuid())
+  sourceDocumentId     String
+  sourceDocument       SourceDocument   @relation(fields: [sourceDocumentId], references: [id], onDelete: Cascade)
+  pageNumber           Int
+  extractionMethod     ExtractionMethod
+  rawText              String?
+  extractionConfidence Float
+  needsReview          Boolean          @default(false)
+  createdAt            DateTime         @default(now())
 
   extractionCandidates ExtractionCandidate[]
   products             Product[]
@@ -126,17 +126,17 @@ model SourcePage {
 }
 
 model ExtractionCandidate {
-  id               String          @id @default(uuid())
-  sourcePageId     String?
-  sourcePage       SourcePage?     @relation(fields: [sourcePageId], references: [id], onDelete: Cascade)
-  rowNumber        Int?
-  field            ExtractionField
-  rawValue         String
-  normalizedValue  String?
-  confidence       Float
-  boundingBoxJson  Json?
-  ruleName         String?
-  createdAt        DateTime        @default(now())
+  id              String          @id @default(uuid())
+  sourcePageId    String?
+  sourcePage      SourcePage?     @relation(fields: [sourcePageId], references: [id], onDelete: Cascade)
+  rowNumber       Int?
+  field           ExtractionField
+  rawValue        String
+  normalizedValue String?
+  confidence      Float
+  boundingBoxJson Json?
+  ruleName        String?
+  createdAt       DateTime        @default(now())
 
   @@index([sourcePageId])
 }
@@ -153,7 +153,7 @@ model Product {
   priceCents          Int?
   include             Boolean        @default(true)
   status              ProductStatus  @default(NEEDS_REVIEW)
-  confidence           Float
+  confidence          Float
   extractionNotesJson Json?
   createdAt           DateTime       @default(now())
   updatedAt           DateTime       @updatedAt
@@ -163,17 +163,23 @@ model Product {
 }
 
 model LabelTemplate {
-  id                  String                     @id @default(uuid())
-  displayName         String
-  renderingMode       LabelTemplateRenderingMode
-  columns             Int
-  rows                Int
-  labelsPerSheet      Int
-  templateStorageKey  String?
-  configJson          Json
-  isPreset            Boolean                    @default(false)
-  createdAt           DateTime                   @default(now())
-  updatedAt           DateTime                   @updatedAt
+  id                   String                     @id @default(uuid())
+  displayName          String
+  renderingMode        LabelTemplateRenderingMode
+  columns              Int
+  rows                 Int
+  labelsPerSheet       Int
+  templateStorageKey   String?
+  /// Version tag for the source .docx this preset points at (e.g. "0.1.0-inspected").
+  /// Bump this whenever templateStorageKey's file content changes so LabelRun
+  /// snapshots can tell which template version actually produced them.
+  templateVersion      String?
+  /// SHA-256 of the file at templateStorageKey, captured at seed/registration time.
+  sourceTemplateSha256 String?
+  configJson           Json
+  isPreset             Boolean                    @default(false)
+  createdAt            DateTime                   @default(now())
+  updatedAt            DateTime                   @updatedAt
 
   labelRuns LabelRun[]
 }
@@ -184,12 +190,23 @@ model LabelRun {
   sourceDocument              SourceDocument @relation(fields: [sourceDocumentId], references: [id], onDelete: Cascade)
   labelTemplateId             String
   labelTemplate               LabelTemplate  @relation(fields: [labelTemplateId], references: [id], onDelete: Restrict)
-  copiesPerProduct             Int
-  status                       LabelRunStatus @default(DRAFT)
-  placementPlanJson            Json
+  copiesPerProduct            Int
+  status                      LabelRunStatus @default(DRAFT)
+  placementPlanJson           Json
   generatedArtifactStorageKey String?
-  createdAt                    DateTime       @default(now())
-  updatedAt                    DateTime       @updatedAt
+  /// SHA-256 of the generated artifact bytes (DOCX or debug JSON), for integrity/audit.
+  generatedArtifactSha256     String?
+  /// Snapshot of LabelTemplate.templateVersion at generation time (the template row can change later).
+  templateVersion             String?
+  /// Snapshot of LabelTemplate.sourceTemplateSha256 at generation time.
+  templateSha256              String?
+  sheetCount                  Int?
+  filledSlotCount             Int?
+  emptySlotCount              Int?
+  /// Renderer/validation warnings and other non-fatal metadata captured during generation.
+  metadataJson                Json?
+  createdAt                   DateTime       @default(now())
+  updatedAt                   DateTime       @updatedAt
 
   @@index([sourceDocumentId])
 }

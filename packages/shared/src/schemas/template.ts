@@ -12,6 +12,8 @@ export const labelTemplateSchema = z.object({
   rows: z.number().int().positive(),
   labelsPerSheet: z.number().int().positive(),
   templateStorageKey: z.string().nullable(),
+  templateVersion: z.string().nullable(),
+  sourceTemplateSha256: z.string().nullable(),
   configJson: z.record(z.string(), z.unknown()),
   isPreset: z.boolean(),
   createdAt: z.coerce.date(),

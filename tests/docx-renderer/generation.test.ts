@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import JSZip from "jszip";
-import { XMLParser } from "fast-xml-parser";
+import { XMLParser, XMLValidator } from "fast-xml-parser";
 import { buildPlacements } from "@label-maker/label-layout";
 import type { LabelTemplate } from "@label-maker/shared";
 import {
@@ -59,6 +59,20 @@ async function renderAndReopen(
   const zip = await JSZip.loadAsync(result.buffer);
   const documentXml = await zip.file("word/document.xml")?.async("text");
   if (!documentXml) throw new Error("word/document.xml missing from generated docx");
+
+  // Strict well-formedness (exactly one XML declaration, properly
+  // closed/nested elements) - not just re-parseable by the same lenient
+  // parser used to build it. Regression guard for the exact bug that made
+  // real Avery 5155 sample DOCX artifacts unopenable in Microsoft Word
+  // (a duplicate <?xml ...?> declaration in word/document.xml); the
+  // synthetic fixture used here also carries a source XML declaration, so
+  // it exercises the identical code path.
+  const validation = XMLValidator.validate(documentXml);
+  if (validation !== true) {
+    throw new Error(`word/document.xml is not well-formed XML: ${validation.err.msg} (line ${validation.err.line}).`);
+  }
+  expect((documentXml.match(/<\?xml/g) ?? []).length).toBe(1);
+
   return { result, zip, documentXml };
 }
 

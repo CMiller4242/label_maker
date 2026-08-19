@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import JSZip from "jszip";
-import { XMLBuilder, XMLParser } from "fast-xml-parser";
+import { XMLBuilder, XMLParser, XMLValidator } from "fast-xml-parser";
 
 /**
  * Low-level, label-agnostic helpers for reading and writing WordprocessingML
@@ -15,6 +15,24 @@ export const WORD_DOCUMENT_XML_PATH = "word/document.xml";
 
 export class InvalidDocxPackageError extends Error {
   readonly code = "INVALID_DOCX_PACKAGE";
+}
+
+/**
+ * Thrown when a .docx package this module just generated fails structural
+ * or XML well-formedness validation - i.e. the output would not actually
+ * open in Microsoft Word, even though it is a structurally valid zip and
+ * re-parses fine with lenient tools. A renderer must never return bytes
+ * that fail this check.
+ */
+export class InvalidGeneratedDocxPackageError extends Error {
+  readonly code = "INVALID_GENERATED_DOCX_PACKAGE";
+  readonly issues: string[];
+
+  constructor(issues: string[]) {
+    super(`Generated .docx package failed validation:\n${issues.map((issue) => `  - ${issue}`).join("\n")}`);
+    this.name = "InvalidGeneratedDocxPackageError";
+    this.issues = issues;
+  }
 }
 
 /** Attribute bag for one XML element, as produced by fast-xml-parser's `preserveOrder` mode. */
@@ -60,10 +78,75 @@ export function parseXml(xml: string): XmlNode[] {
   return xmlParser().parse(xml) as XmlNode[];
 }
 
-/** Serializes a `preserveOrder` node array back to an XML string, with a standard XML declaration. */
+/**
+ * Serializes a `preserveOrder` node array back to an XML string, with a
+ * standard XML declaration - always exactly one. `parseXml()` (via
+ * fast-xml-parser's `preserveOrder: true`) captures a source document's own
+ * `<?xml ...?>` prolog as a literal node at the front of its returned
+ * array, so building a tree derived from a parsed document (e.g.
+ * `templatePackage.documentTree`) without stripping that node first would
+ * re-emit it verbatim *in addition to* the declaration prepended below -
+ * two declarations, which is invalid XML. `unzip`/a lenient re-parse never
+ * catch this, but Microsoft Word's strict OOXML parser rejects the whole
+ * file outright ("Word experienced an error trying to open the file").
+ */
 export function buildXml(nodes: XmlNode[]): string {
-  const body = xmlBuilder().build(nodes) as string;
+  const withoutDeclaration = nodes.filter((node) => tagNameOf(node) !== "?xml");
+  const body = xmlBuilder().build(withoutDeclaration) as string;
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n${body}`;
+}
+
+/**
+ * Validates that a just-generated .docx package is actually openable by
+ * Microsoft Word - not just a structurally valid zip. Checks:
+ *
+ * 1. Every part present in `expectedEntryNames` (captured from the source
+ *    template at load time) is present in `zip`, and no unexpected part
+ *    was added - a renderer must only ever rewrite existing parts.
+ * 2. Every `.xml`/`.rels` part is well-formed XML per fast-xml-parser's
+ *    `XMLValidator` - a *strict* check (catches things like more than one
+ *    XML declaration, unclosed tags, mismatched namespaces) distinct from
+ *    just re-parsing with the same lenient parser used to build the tree,
+ *    or checking zip/CRC integrity with a tool like `unzip -t` - neither
+ *    of which would have caught the duplicate-declaration bug this
+ *    function exists to prevent from recurring.
+ *
+ * Throws InvalidGeneratedDocxPackageError (with every issue found, not
+ * just the first) rather than returning a boolean, so a renderer can never
+ * silently return bytes that fail this check.
+ */
+export async function assertGeneratedDocxPackageIsValid(
+  zip: JSZip,
+  expectedEntryNames: ReadonlySet<string>,
+): Promise<void> {
+  const issues: string[] = [];
+
+  const actualEntryNames = new Set(Object.keys(zip.files));
+  for (const name of expectedEntryNames) {
+    if (!actualEntryNames.has(name)) issues.push(`Missing expected package part: "${name}".`);
+  }
+  for (const name of actualEntryNames) {
+    if (!expectedEntryNames.has(name)) {
+      issues.push(`Unexpected package part not present in the source template: "${name}".`);
+    }
+  }
+
+  const xmlEntries = Object.entries(zip.files).filter(
+    ([name, entry]) => !entry.dir && (name.endsWith(".xml") || name.endsWith(".rels")),
+  );
+  for (const [name, entry] of xmlEntries) {
+    const text = await entry.async("text");
+    const result = XMLValidator.validate(text);
+    if (result !== true) {
+      issues.push(
+        `"${name}" is not well-formed XML: ${result.err.msg} (line ${result.err.line}, col ${result.err.col}).`,
+      );
+    }
+  }
+
+  if (issues.length > 0) {
+    throw new InvalidGeneratedDocxPackageError(issues);
+  }
 }
 
 /** The tag name of a node (e.g. "w:tbl"), or undefined if this is a text node. */

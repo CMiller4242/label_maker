@@ -3,7 +3,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import JSZip from "jszip";
-import { XMLParser } from "fast-xml-parser";
+import { XMLParser, XMLValidator } from "fast-xml-parser";
 import { buildPlacements } from "@label-maker/label-layout";
 import type { LabelTemplate, Placement, PlacementPlan } from "@label-maker/shared";
 import {
@@ -90,6 +90,23 @@ async function renderAndReopen(templateBuffer: Buffer, template: LabelTemplate, 
 
   const parser = new XMLParser({ ignoreAttributes: false });
   expect(() => parser.parse(documentXml)).not.toThrow();
+
+  // Every XML/rels part in the package must be *strictly* well-formed XML -
+  // not just re-parseable by the same lenient parser used to build it.
+  // This is the exact class of check that catches a real-Word-rejects-the-
+  // file defect (e.g. more than one XML declaration in word/document.xml)
+  // that renderFixedGridDocx() itself also now asserts internally before
+  // ever returning a buffer (see assertGeneratedDocxPackageIsValid() in
+  // ooxml.ts) - checked again here, independently, at the test level.
+  for (const [name, entry] of Object.entries(zip.files)) {
+    if (entry.dir || !(name.endsWith(".xml") || name.endsWith(".rels"))) continue;
+    const text = await entry.async("text");
+    const validation = XMLValidator.validate(text);
+    if (validation !== true) {
+      throw new Error(`"${name}" is not well-formed XML: ${validation.err.msg} (line ${validation.err.line}).`);
+    }
+    expect((text.match(/<\?xml/g) ?? []).length).toBe(1);
+  }
 
   const tree = parseXml(documentXml);
   return { result, zip, documentXml, tree };

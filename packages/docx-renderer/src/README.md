@@ -59,6 +59,28 @@ used in `generation.test.ts`.
   with whatever wall-clock time the render happened to run at. See
   `tests/docx-renderer/real-avery-5155.test.ts`'s reproducibility
   regression test.
+- `buildXml()` strips any XML declaration node from the tree before
+  serializing, then prepends exactly one canonical `<?xml ...?>` itself.
+  Without this, rebuilding a tree parsed from a source document that
+  already had a declaration (every real template does) produced **two**
+  declarations in `word/document.xml` - a structurally valid zip that
+  re-parses fine with the same lenient parser used to build it (so
+  `unzip -t` and a naive re-parse-and-compare test both missed it), but
+  invalid XML that Microsoft Word's strict parser rejects outright
+  ("Word experienced an error trying to open the file"). This did not
+  conflict with the reproducibility fix above - both are satisfied
+  simultaneously; there was no tradeoff to make. `renderFixedGridDocx()`
+  now also calls `assertGeneratedDocxPackageIsValid()` on the actual
+  output bytes before ever returning them - it re-opens the generated
+  buffer and checks every package part matches the source template's part
+  set and that every `.xml`/`.rels` part is well-formed per
+  fast-xml-parser's `XMLValidator` (a strict check, distinct from the
+  lenient parser used elsewhere) - so this class of defect can never ship
+  silently again. See `tests/docx-renderer/ooxml.test.ts` (unit-level,
+  the exact root cause) and the well-formedness assertions added to
+  `real-avery-5155.test.ts`/`generation.test.ts`/
+  `tests/scripts/generate-sample-avery-5155.test.ts` (integration-level,
+  every render path).
 - `validateFixedGridTemplate()` is a strict, throwing gate: it requires
   exactly one normal in-flow, `<w:tblLayout w:type="fixed"/>` table whose
   recognized `FixedGridPattern` (`SIMPLE` or `INTERLEAVED_SPACER` - see

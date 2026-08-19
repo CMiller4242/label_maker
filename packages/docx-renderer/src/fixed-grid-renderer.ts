@@ -1,5 +1,7 @@
+import JSZip from "jszip";
 import type { LabelTemplate, Placement, PlacementPlan } from "@label-maker/shared";
 import {
+  assertGeneratedDocxPackageIsValid,
   childrenOf,
   cloneNode,
   findDirectChildren,
@@ -219,6 +221,10 @@ export async function renderFixedGridDocx(
   const style = readLabelTextStyle(template);
 
   const templatePackage = await loadTemplateDocx(templateBuffer, template.id);
+  // Captured before any mutation: renderFixedGridDocx only ever overwrites
+  // the existing word/document.xml entry's content, never adds or removes
+  // a package part, so the final output must have exactly this same set.
+  const expectedPackageEntryNames = new Set(Object.keys(templatePackage.zip.files));
   const validated = validateFixedGridTemplate(templatePackage, {
     columns: template.columns,
     rows: template.rows,
@@ -332,6 +338,14 @@ export async function renderFixedGridDocx(
     type: "nodebuffer",
     compression: "DEFLATE",
   });
+
+  // Validate the actual output bytes - not the in-memory node tree, and
+  // not a lenient re-parse - before ever returning them. This is what
+  // catches a real-Word-rejects-the-file class of bug (e.g. the
+  // duplicate-XML-declaration defect buildXml() used to produce) that a
+  // structurally-valid-zip / re-parses-fine check does not.
+  const outputZip = await JSZip.loadAsync(buffer);
+  await assertGeneratedDocxPackageIsValid(outputZip, expectedPackageEntryNames);
 
   return { buffer, mimeType: DOCX_MIME_TYPE, fileExtension: "docx" };
 }

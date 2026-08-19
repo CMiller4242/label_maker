@@ -3,6 +3,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
+import JSZip from "jszip";
+import { XMLValidator } from "fast-xml-parser";
 import {
   SAMPLE_SCENARIOS,
   generateSampleArtifact,
@@ -81,6 +83,40 @@ describe("generateSampleArtifact", () => {
     expect(second.docxPath).toBe(first.docxPath);
     expect(second.sha256).toBe(first.sha256);
     expect(readFileSync(second.docxPath)).toEqual(readFileSync(first.docxPath));
+  });
+
+  it("generates a .docx openable by Microsoft Word - valid zip, every XML/rels part well-formed with exactly one declaration", async () => {
+    // Regression test tied to the precise root cause of a real bug: a
+    // developer opened storage/artifacts/sample-avery-5155-1-product.docx
+    // in desktop Word on Windows and got "Word experienced an error trying
+    // to open the file." The package was a structurally valid zip (unzip
+    // -t passed) whose word/document.xml re-parsed fine with the same
+    // lenient parser used to build it - but it actually contained TWO
+    // <?xml ...?> declarations (buildXml() failed to strip the
+    // declaration node parseXml() captures from the source template),
+    // which is invalid XML that only a strict validator (or Word itself)
+    // catches. This test opens the exact bytes this command persists to
+    // disk and validates them the same strict way Word would reject them.
+    tmpDir = mkdtempSync(path.join(tmpdir(), "avery-5155-sample-"));
+    const scenario = SAMPLE_SCENARIOS[0];
+    if (!scenario) throw new Error("Expected at least one sample scenario.");
+
+    const artifact = await generateSampleArtifact(templateBuffer, scenario, tmpDir);
+    const onDiskBytes = readFileSync(artifact.docxPath);
+
+    const zip = await JSZip.loadAsync(onDiskBytes); // throws if not a valid zip
+    const requiredParts = ["[Content_Types].xml", "_rels/.rels", "word/document.xml"];
+    for (const part of requiredParts) {
+      expect(zip.file(part)).toBeTruthy();
+    }
+
+    for (const [name, entry] of Object.entries(zip.files)) {
+      if (entry.dir || !(name.endsWith(".xml") || name.endsWith(".rels"))) continue;
+      const text = await entry.async("text");
+      const validation = XMLValidator.validate(text);
+      expect.soft(validation, `"${name}" should be well-formed XML`).toBe(true);
+      expect((text.match(/<\?xml/g) ?? []).length, `"${name}" should have exactly one XML declaration`).toBe(1);
+    }
   });
 
   it("never writes real product-deck content - only the controlled sample data", () => {

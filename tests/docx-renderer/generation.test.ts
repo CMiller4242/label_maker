@@ -184,6 +184,49 @@ describe("renderFixedGridDocx", () => {
       InvalidFixedGridTemplateError,
     );
   });
+
+  it("sets an explicit dxa w:tblW equal to the sum of the source's own gridCol widths (never left as auto)", async () => {
+    // A well-documented Word compatibility hazard: w:tblLayout="fixed"
+    // alone does not reliably force Word to honor per-column widths when
+    // w:tblW is type="auto" - see normalizeTableWidth() in
+    // fixed-grid-renderer.ts. This derives the expected total purely from
+    // the synthetic fixture's own declared column widths, never a
+    // hardcoded literal.
+    const templateBuffer = await buildSyntheticFixedGridDocx({ columns: 4, rows: 15 });
+    const template = testTemplate();
+    const plan = buildPlacements([product("p1", "SKU-1", "Widget", 100)], GEOMETRY, 1);
+
+    const { documentXml } = await renderAndReopen(templateBuffer, template, plan);
+    const gridColWidths = [...documentXml.matchAll(/<w:gridCol w:w="(\d+)">/g)].map((m) => Number(m[1]));
+    expect(gridColWidths.length).toBeGreaterThan(0);
+    const expectedTotal = gridColWidths.reduce((sum, w) => sum + w, 0);
+
+    const tblWMatch = documentXml.match(/<w:tblW w:w="(\d+)" w:type="dxa">/);
+    expect(tblWMatch?.[1]).toBe(String(expectedTotal));
+  });
+
+  it("reviewOutlines option adds a visible border to every cell without changing content or geometry", async () => {
+    const templateBuffer = await buildSyntheticFixedGridDocx({ columns: 4, rows: 15 });
+    const template = testTemplate();
+    const plan = buildPlacements([product("p1", "SKU-1", "Widget", 100)], GEOMETRY, 8);
+
+    const plain = await renderAndReopen(templateBuffer, template, plan);
+    const reviewResult = await renderFixedGridDocx(templateBuffer, template, plan, { reviewOutlines: true });
+    const reviewZip = await JSZip.loadAsync(reviewResult.buffer);
+    const reviewXml = await reviewZip.file("word/document.xml")?.async("text");
+    if (!reviewXml) throw new Error("word/document.xml missing from review-outlines output");
+
+    expect(plain.documentXml).not.toContain("<w:tcBorders>");
+    // 15 rows x 4 columns, all bordered (the synthetic fixture's SIMPLE
+    // pattern has no spacer columns, unlike the real Avery 5155 fixture).
+    expect((reviewXml.match(/<w:tcBorders>/g) ?? []).length).toBe(15 * 4);
+
+    // Same content, same table geometry - only the borders differ.
+    expect(reviewXml).toContain("SKU-1");
+    const parser = new XMLParser({ ignoreAttributes: false });
+    expect(() => parser.parse(reviewXml)).not.toThrow();
+    expect(XMLValidator.validate(reviewXml)).toBe(true);
+  });
 });
 
 describe("renderFloatingDocx", () => {

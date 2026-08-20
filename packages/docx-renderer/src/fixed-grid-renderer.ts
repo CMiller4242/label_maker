@@ -64,6 +64,12 @@ function buildTextParagraph(
       "w:line": String(style.lineSpacing.line),
       "w:lineRule": style.lineSpacing.lineRule,
     }),
+    // Explicit zero indentation - defense in depth against any inherited
+    // left/right/first-line/hanging indent (from styles.xml or a future
+    // template) silently shifting content off-center. This label renderer
+    // never wants paragraph indentation; centering comes entirely from
+    // w:jc below plus the cell's own width/margins.
+    makeEmptyElement("w:ind", { "w:left": "0", "w:right": "0", "w:firstLine": "0", "w:hanging": "0" }),
     makeEmptyElement("w:jc", { "w:val": style.horizontalAlignment }),
   ]);
 
@@ -118,13 +124,110 @@ function ensureExplicitCellMargins(
   setChildren(tcPr, children);
 }
 
+/**
+ * CT_TcPrBase's element sequence (the subset this renderer ever touches).
+ * `w:tcPr` children must appear in this relative order or Word's strict
+ * OOXML parser can silently ignore/misplace an out-of-order element - so
+ * every helper that adds/replaces a tcPr child must insert it at the
+ * position this order implies, not just append it.
+ */
+const TC_PR_CHILD_ORDER = [
+  "w:cnfStyle",
+  "w:tcW",
+  "w:gridSpan",
+  "w:hMerge",
+  "w:vMerge",
+  "w:tcBorders",
+  "w:shd",
+  "w:noWrap",
+  "w:tcMar",
+  "w:textDirection",
+  "w:tcFitText",
+  "w:vAlign",
+  "w:hideMark",
+];
+
+/** Replaces (or inserts) one `w:tcPr` child at its schema-correct position, per TC_PR_CHILD_ORDER. */
+function setTcPrChildInOrder(tcPr: XmlNode, tag: string, newChild: XmlNode): void {
+  const children = childrenOf(tcPr).filter((c) => tagNameOf(c) !== tag);
+  const orderIndex = TC_PR_CHILD_ORDER.indexOf(tag);
+  const insertAt = children.findIndex((c) => {
+    const otherIndex = TC_PR_CHILD_ORDER.indexOf(tagNameOf(c) ?? "");
+    return otherIndex === -1 || otherIndex > orderIndex;
+  });
+  if (insertAt === -1) children.push(newChild);
+  else children.splice(insertAt, 0, newChild);
+  setChildren(tcPr, children);
+}
+
 function ensureCellVerticalAlignment(
   tcPr: XmlNode,
   vAlign: LabelTextStyleConfig["verticalAlignment"],
 ): void {
-  const children = childrenOf(tcPr).filter((c) => tagNameOf(c) !== "w:vAlign");
-  children.push(makeEmptyElement("w:vAlign", { "w:val": vAlign }));
-  setChildren(tcPr, children);
+  setTcPrChildInOrder(tcPr, "w:vAlign", makeEmptyElement("w:vAlign", { "w:val": vAlign }));
+}
+
+/** Thin single-line border color used for the review-only cell-outline mode - never applied by default. */
+const REVIEW_BORDER_COLOR = "BFBFBF";
+
+/**
+ * Adds a thin, uniform border to every side of a cell - purely to make the
+ * real physical cell rectangle visible on screen for centering/geometry
+ * review. This is opt-in only (`renderFixedGridDocx`'s `reviewOutlines`
+ * option) and MUST NOT be used for a template that will actually be
+ * printed on real Avery stock: unlike Word's built-in non-printing "Table
+ * Gridlines" view (View > Gridlines, which already shows for any
+ * borderless table - true for every cell here by default, on screen only,
+ * never printed), a `w:tcBorders` border is real cell-boundary ink that
+ * Word WILL print.
+ */
+function ensureCellReviewBorder(tcPr: XmlNode): void {
+  const edge = (tag: string) =>
+    makeEmptyElement(tag, {
+      "w:val": "single",
+      "w:sz": "2",
+      "w:space": "0",
+      "w:color": REVIEW_BORDER_COLOR,
+    });
+  const tcBorders = makeElement("w:tcBorders", {}, [
+    edge("w:top"),
+    edge("w:left"),
+    edge("w:bottom"),
+    edge("w:right"),
+  ]);
+  setTcPrChildInOrder(tcPr, "w:tcBorders", tcBorders);
+}
+
+/**
+ * Sets the table's overall preferred width (`w:tblW`) to the exact sum of
+ * its own already-declared `w:tblGrid` column widths, as an explicit `dxa`
+ * value. Never invents a new physical dimension - `widthsTwips` always
+ * comes from the table's own inspected/validated grid.
+ *
+ * Why this matters: `w:tblLayout w:type="fixed"` alone does not reliably
+ * force Word to honor per-column widths when `w:tblW` is `type="auto"`
+ * (`w:w="0"`, i.e. "let Word calculate") - a well-documented Word
+ * compatibility hazard where the table's effective width/column
+ * allocation can still be recomputed from available page width rather
+ * than the declared grid, especially once real content fills more cells
+ * than the template's blank preview state exercised. Pairing "fixed"
+ * layout with an explicit total `w:tblW` removes that ambiguity.
+ */
+function normalizeTableWidth(tblPr: XmlNode, widthsTwips: number[]): void {
+  const totalWidth = widthsTwips.reduce((sum, w) => sum + w, 0);
+  const children = childrenOf(tblPr).filter((c) => tagNameOf(c) !== "w:tblW");
+  const tblW = makeEmptyElement("w:tblW", { "w:w": String(totalWidth), "w:type": "dxa" });
+  // CT_TblPrBase: tblW is the first sizing-related element, ordered before
+  // tblLayout/tblCellMar/tblLook/etc. - insert before whichever of those
+  // comes first (or at the front if tblPr had no such children yet).
+  const insertAt = children.findIndex((c) =>
+    ["w:tblLayout", "w:tblCellMar", "w:tblLook", "w:tblBorders", "w:jc", "w:tblInd"].includes(
+      tagNameOf(c) ?? "",
+    ),
+  );
+  if (insertAt === -1) children.unshift(tblW);
+  else children.splice(insertAt, 0, tblW);
+  setChildren(tblPr, children);
 }
 
 /** Replaces a cell's body content (paragraphs) with the 3 label lines, preserving/adjusting tcPr. */
@@ -207,10 +310,25 @@ function makePageBreakParagraph(): XmlNode {
  * fixed grid, and MissingLabelTextStyleConfigError if
  * template.configJson.labelTextStyle is absent/invalid.
  */
+export interface RenderFixedGridDocxOptions {
+  /**
+   * Adds a thin, non-default border to every cell (writable and
+   * spacer/gutter alike) so the real physical cell rectangles are visible
+   * on screen for centering/geometry review. NEVER enable this for a
+   * template that will actually be printed on real Avery stock - unlike
+   * Word's built-in non-printing "Table Gridlines" view (View > Gridlines,
+   * on by default for any borderless table, including this renderer's
+   * normal output), these borders are real ink Word WILL print. Defaults
+   * to false/unset - normal rendering never adds borders.
+   */
+  reviewOutlines?: boolean;
+}
+
 export async function renderFixedGridDocx(
   templateBuffer: Buffer,
   template: LabelTemplate,
   plan: PlacementPlan,
+  options: RenderFixedGridDocxOptions = {},
 ): Promise<RenderResult> {
   if (template.renderingMode !== "FIXED_GRID") {
     throw new InvalidFixedGridTemplateError(template.id, [
@@ -232,6 +350,16 @@ export async function renderFixedGridDocx(
   });
 
   const sourceTable = findTableNode(templatePackage.documentTree, validated.tableIndex);
+
+  // Fix a well-documented Word compatibility hazard once, before cloning:
+  // an explicit total table width removes any ambiguity between the
+  // declared "fixed" layout and an "auto" w:tblW, so every cloned sheet
+  // inherits the correction automatically. See normalizeTableWidth()'s
+  // doc comment.
+  const tableTblPr = findDirectChildren(childrenOf(sourceTable), "w:tblPr")[0];
+  if (tableTblPr) {
+    normalizeTableWidth(tableTblPr, validated.pattern.rawGridColumnWidthsTwips);
+  }
 
   const body = findFirstByTag(templatePackage.documentTree, "w:body");
   if (!body) {
@@ -273,10 +401,23 @@ export async function renderFixedGridDocx(
     rows.forEach((row, rowIndex) => {
       const cells = findDirectChildren(childrenOf(row), "w:tc");
       cells.forEach((cell, columnIndex) => {
+        if (options.reviewOutlines) {
+          // Every cell, writable or spacer/gutter, blank or filled - the
+          // point is to make the real physical grid visible for review.
+          const cellChildren = childrenOf(cell);
+          let cellTcPr = findDirectChildren(cellChildren, "w:tcPr")[0];
+          if (!cellTcPr) {
+            cellTcPr = makeElement("w:tcPr", {}, []);
+            setChildren(cell, [cellTcPr, ...cellChildren]);
+          }
+          ensureCellReviewBorder(cellTcPr);
+        }
+
         const slotIndex = physicalCellToSlot.get(`${rowIndex}:${columnIndex}`);
         if (slotIndex === undefined) {
           // Not a writable label cell (e.g. a spacer/gutter column) - leave
-          // it completely untouched.
+          // it completely untouched (beyond the review border above, when
+          // requested).
           return;
         }
         const placement = sheetPlacements?.get(slotIndex);

@@ -134,6 +134,23 @@ function gridWidths(table: XmlNode): number[] {
     .filter((v): v is string => typeof v === "string")
     .map(Number);
 }
+function cellTcW(cell: XmlNode): number | null {
+  const tcPr = findFirstByTag(childrenOf(cell), "w:tcPr");
+  const tcW = tcPr && findFirstByTag(childrenOf(tcPr), "w:tcW");
+  const val = tcW && getAttr(tcW, "w:w");
+  return val !== undefined && val !== null ? Number(val) : null;
+}
+function firstParagraphJc(cell: XmlNode): string | null {
+  const p = findFirstByTag(childrenOf(cell), "w:p");
+  const pPr = p && findFirstByTag(childrenOf(p), "w:pPr");
+  const jc = pPr && findFirstByTag(childrenOf(pPr), "w:jc");
+  return jc ? (getAttr(jc, "w:val") ?? null) : null;
+}
+function cellVAlign(cell: XmlNode): string | null {
+  const tcPr = findFirstByTag(childrenOf(cell), "w:tcPr");
+  const vAlign = tcPr && findFirstByTag(childrenOf(tcPr), "w:vAlign");
+  return vAlign ? (getAttr(vAlign, "w:val") ?? null) : null;
+}
 
 /**
  * Asserts the full interleaved-grid contract against one generated sheet
@@ -142,17 +159,28 @@ function gridWidths(table: XmlNode): number[] {
  * never written to and keep their <w:vMerge>, and the raw 7-column grid
  * shape/fixed layout is preserved unchanged.
  */
+const SOURCE_GRID_WIDTHS = [2520, 432, 2520, 432, 2520, 432, 2520];
+const SOURCE_TABLE_WIDTH_TWIPS = SOURCE_GRID_WIDTHS.reduce((sum, w) => sum + w, 0);
+
 function assertSheetTable(
   table: XmlNode,
   sheetNumber: number,
   sheetPlacements: Map<number, Placement>,
   allSkus: string[],
 ): void {
-  expect(gridWidths(table)).toEqual([2520, 432, 2520, 432, 2520, 432, 2520]);
+  expect(gridWidths(table)).toEqual(SOURCE_GRID_WIDTHS);
 
   const tblPr = findFirstByTag(childrenOf(table), "w:tblPr");
   const tblLayout = tblPr && findFirstByTag(childrenOf(tblPr), "w:tblLayout");
   expect(tblLayout?.[":@"]?.["@_w:type"]).toBe("fixed");
+
+  // The table's overall width must be an explicit dxa value equal to the
+  // sum of its own gridCol widths - never "auto" (a well-documented Word
+  // compatibility hazard for "fixed" layout tables: see
+  // normalizeTableWidth() in fixed-grid-renderer.ts).
+  const tblW = tblPr && findFirstByTag(childrenOf(tblPr), "w:tblW");
+  expect(tblW && getAttr(tblW, "w:type")).toBe("dxa");
+  expect(Number(tblW && getAttr(tblW, "w:w"))).toBe(SOURCE_TABLE_WIDTH_TWIPS);
 
   const rows = getRows(table);
   expect(rows).toHaveLength(15);
@@ -169,10 +197,17 @@ function assertSheetTable(
       const slotIndex = rowIndex * 4 + logicalCol;
       const cell = cells[rawCol];
       if (!cell) throw new Error(`Missing writable cell at row ${rowIndex} raw col ${rawCol}`);
+
+      // Cell width unchanged from the source grid, and centering settings
+      // present regardless of whether this specific cell got filled.
+      expect(cellTcW(cell)).toBe(SOURCE_GRID_WIDTHS[rawCol]);
+      expect(cellVAlign(cell)).toBe("center");
+
       const text = extractText(cell);
       const placement = sheetPlacements.get(slotIndex);
       if (placement) {
         expect(text).toContain(placement.sku ?? "");
+        expect(firstParagraphJc(cell)).toBe("center");
       } else {
         expect(text.trim()).toBe("");
       }
@@ -182,6 +217,7 @@ function assertSheetTable(
       const cell = cells[rawCol];
       if (!cell) throw new Error(`Missing spacer cell at row ${rowIndex} raw col ${rawCol}`);
       expect(cellHasVMerge(cell)).toBe(true);
+      expect(cellTcW(cell)).toBe(SOURCE_GRID_WIDTHS[rawCol]);
       const text = extractText(cell);
       expect(text.trim()).toBe("");
       for (const sku of allSkus) {
@@ -339,5 +375,49 @@ describe("real avery-5155/original.docx template", () => {
 
     mkdirSync(artifactsDir, { recursive: true });
     writeFileSync(path.join(artifactsDir, "real-avery-5155-8-products.docx"), result.buffer);
+  });
+
+  it("preserves the source fixture's own table/cell geometry exactly (structural comparison, not hardcoded literals)", async () => {
+    // Directly compares the generated output's geometry against the real
+    // source fixture's own inspected values - table count, cell count,
+    // tblGrid/tcW widths, and fixed-layout settings must be identical to
+    // what the source template itself declares, not merely equal to a
+    // value this test happens to hardcode.
+    const buffer = readFileSync(path.join(templatesDir, "avery-5155", "original.docx"));
+    const sourceReport = await inspectDocxTemplate({ buffer, filePath: "avery-5155/original.docx" });
+    const sourceTable = sourceReport.tables[0];
+    if (!sourceTable) throw new Error("Expected the source fixture to have a table.");
+
+    const products = [product("p1", "SKU-1", "Widget One", 999)];
+    const plan = buildPlacements(products, { id: "avery-5155", columns: 4, rows: 15, labelsPerSheet: 60 }, 8);
+    const { tree } = await renderAndReopen(buffer, realAveryTemplate(), plan);
+
+    const tables = getTables(tree);
+    expect(tables).toHaveLength(sourceReport.tableCount);
+
+    const table = tables[0] as XmlNode;
+    const rows = getRows(table);
+    expect(rows).toHaveLength(sourceTable.rowCount);
+    const totalCells = rows.reduce((sum, row) => sum + getCells(row).length, 0);
+    expect(totalCells).toBe(sourceTable.totalWritableCells); // "writable" here means raw cell count, incl. spacers
+
+    expect(gridWidths(table)).toEqual(sourceTable.gridColumnWidthsTwips);
+
+    const tblPr = findFirstByTag(childrenOf(table), "w:tblPr");
+    const tblLayout = tblPr && findFirstByTag(childrenOf(tblPr), "w:tblLayout");
+    expect(tblLayout && getAttr(tblLayout, "w:type")).toBe(sourceTable.layoutType);
+    expect(sourceTable.isFixedLayout).toBe(true); // sanity: the source really does declare fixed layout
+
+    // Every generated cell's own tcW matches the source's per-row-index
+    // tcW exactly (source rows are already confirmed uniform elsewhere).
+    const sourceRow0 = sourceTable.rows[0];
+    if (!sourceRow0) throw new Error("Expected the source fixture's table to have at least one row.");
+    rows.forEach((row) => {
+      const cells = getCells(row);
+      cells.forEach((cell, cellIndex) => {
+        const sourceCellWidth = sourceRow0.cells[cellIndex]?.widthTwips;
+        expect(cellTcW(cell)).toBe(sourceCellWidth);
+      });
+    });
   });
 });

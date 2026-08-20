@@ -119,6 +119,49 @@ describe("generateSampleArtifact", () => {
     }
   });
 
+  it("review-grid scenario borders every cell (60 writable cells were border-free in the source); standard artifacts keep only the source's own spacer-column borders", async () => {
+    // The real Avery 5155 source template's 3 spacer/gutter columns
+    // already carry their own w:tcBorders (45 = 3 spacer cols x 15 rows) -
+    // that's pre-existing source geometry standard artifacts must preserve
+    // untouched (cloned once per sheet), not something this renderer adds.
+    // reviewOutlines additionally borders the 60 writable cells that have
+    // no border in the source, so every cell (105 = 15 rows x 7 cols) ends
+    // up outlined for review.
+    tmpDir = mkdtempSync(path.join(tmpdir(), "avery-5155-sample-"));
+    const sourceXml = await (await JSZip.loadAsync(templateBuffer)).file("word/document.xml")?.async("text");
+    if (!sourceXml) throw new Error("word/document.xml missing from the source fixture");
+    const sourceBordersPerTable = (sourceXml.match(/<w:tcBorders>/g) ?? []).length;
+    expect(sourceBordersPerTable).toBe(45); // 3 spacer columns x 15 rows
+
+    const reviewScenario = SAMPLE_SCENARIOS.find((s) => s.fileBaseName === "sample-avery-5155-review-grid");
+    if (!reviewScenario) throw new Error("Expected a review-grid scenario in SAMPLE_SCENARIOS.");
+    expect(reviewScenario.reviewOutlines).toBe(true);
+
+    const reviewArtifact = await generateSampleArtifact(templateBuffer, reviewScenario, tmpDir);
+    const reviewZip = await JSZip.loadAsync(readFileSync(reviewArtifact.docxPath));
+    const reviewXml = await reviewZip.file("word/document.xml")?.async("text");
+    if (!reviewXml) throw new Error("word/document.xml missing from the review-grid artifact");
+    expect(XMLValidator.validate(reviewXml)).toBe(true);
+    // 2 sheets x 15 rows x 7 cells (writable + spacer alike) all bordered.
+    expect((reviewXml.match(/<w:tcBorders>/g) ?? []).length).toBe(2 * 15 * 7);
+
+    for (const [fileBaseName, expectedSheets] of [
+      ["sample-avery-5155-1-product", 1],
+      ["sample-avery-5155-8-products", 2],
+    ] as const) {
+      const standardScenario = SAMPLE_SCENARIOS.find((s) => s.fileBaseName === fileBaseName);
+      if (!standardScenario) throw new Error(`Expected scenario "${fileBaseName}" in SAMPLE_SCENARIOS.`);
+      expect(standardScenario.reviewOutlines).toBeFalsy();
+
+      const artifact = await generateSampleArtifact(templateBuffer, standardScenario, tmpDir);
+      const zip = await JSZip.loadAsync(readFileSync(artifact.docxPath));
+      const xml = await zip.file("word/document.xml")?.async("text");
+      if (!xml) throw new Error(`word/document.xml missing from ${fileBaseName}`);
+      expect(artifact.sheetCount).toBe(expectedSheets);
+      expect((xml.match(/<w:tcBorders>/g) ?? []).length).toBe(sourceBordersPerTable * expectedSheets);
+    }
+  });
+
   it("never writes real product-deck content - only the controlled sample data", () => {
     for (const scenario of SAMPLE_SCENARIOS) {
       for (const product of scenario.products) {

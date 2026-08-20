@@ -78,6 +78,15 @@ interface SampleScenario {
   fileBaseName: string;
   copiesPerProduct: number;
   products: SampleProductSpec[];
+  /**
+   * When true, every cell (writable and spacer/gutter alike) gets a thin
+   * on-screen border so the real physical cell rectangles are visible for
+   * centering/geometry review - see `renderFixedGridDocx()`'s
+   * `reviewOutlines` option. Only the dedicated review scenario below sets
+   * this; the two standard artifacts are never affected, so they always
+   * reflect exactly what a real label run would produce.
+   */
+  reviewOutlines?: boolean;
 }
 
 /** Controlled, non-sensitive sample data only - never real customer/product-deck content. */
@@ -98,6 +107,24 @@ export const SAMPLE_SCENARIOS: SampleScenario[] = [
       description: `Sample Widget ${String.fromCharCode(65 + i)}`,
       priceCents: 250 * (i + 1),
     })),
+  },
+  {
+    // Clearly named review/geometry sample (per its own request): fills
+    // every sheet completely (8 products x 8 copies = 64 placements, so
+    // sheet 1's 60 slots are entirely full) and draws every cell's real
+    // boundary, so a reviewer can visually confirm content sits centered
+    // within its own physical label rectangle - not shifted, not
+    // overflowing into a neighboring/spacer cell. NEVER use this file as a
+    // print template: the borders are real ink Word will print.
+    fileBaseName: "sample-avery-5155-review-grid",
+    copiesPerProduct: 8,
+    products: Array.from({ length: 8 }, (_, i) => ({
+      id: `sample-${i + 1}`,
+      sku: `SAMPLE-SKU-${100 + i}`,
+      description: `Sample Widget ${String.fromCharCode(65 + i)}`,
+      priceCents: 250 * (i + 1),
+    })),
+    reviewOutlines: true,
   },
 ];
 
@@ -136,7 +163,9 @@ export async function generateSampleArtifact(
   const plan = buildPlacements(placementInputs, AVERY_5155_GEOMETRY, scenario.copiesPerProduct);
   validatePlacements(plan.placements, AVERY_5155_GEOMETRY);
 
-  const result = await renderFixedGridDocx(templateBuffer, sampleAvery5155Template(), plan);
+  const result = await renderFixedGridDocx(templateBuffer, sampleAvery5155Template(), plan, {
+    reviewOutlines: scenario.reviewOutlines,
+  });
 
   mkdirSync(outputDir, { recursive: true });
   const docxPath = path.join(outputDir, `${scenario.fileBaseName}.docx`);
@@ -158,6 +187,7 @@ export async function generateSampleArtifact(
         scenario: scenario.fileBaseName,
         copiesPerProduct: scenario.copiesPerProduct,
         products: scenario.products,
+        reviewOutlines: scenario.reviewOutlines ?? false,
         docxFile: path.basename(docxPath),
         byteSize,
         sha256,
@@ -222,7 +252,11 @@ async function main(): Promise<void> {
 
   console.log(`Generated ${generated.length} real Avery 5155 sample DOCX artifact(s):\n`);
   for (const artifact of generated) {
+    const scenario = SAMPLE_SCENARIOS.find((s) => s.fileBaseName === artifact.fileBaseName);
     console.log(`[${artifact.fileBaseName}]`);
+    if (scenario?.reviewOutlines) {
+      console.log("  ** REVIEW-ONLY: has visible cell-boundary borders. Do NOT print this on real Avery stock. **");
+    }
     console.log(`  Absolute path:            ${artifact.docxPath}`);
     console.log(`  Windows-accessible path:  ${toWindowsAccessiblePath(artifact.docxPath)}`);
     console.log(`  Metadata JSON:            ${artifact.metadataPath}`);

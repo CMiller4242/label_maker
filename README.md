@@ -171,7 +171,7 @@ missing or ambiguous metadata.
 pnpm docx:sample-5155
 ```
 
-Renders two real, persistent sample `.docx` files straight from the
+Renders three real, persistent sample `.docx` files straight from the
 committed `fixtures/label-templates/avery-5155/original.docx` source
 template, using the exact same production `buildPlacements()`/
 `validatePlacements()` (`@label-maker/label-layout`) and
@@ -183,9 +183,15 @@ real customer/product-deck content):
   copies: 8 filled labels, 52 blank)
 - `storage/artifacts/sample-avery-5155-8-products.docx` (8 products x 8
   copies: two sheets, 60 filled + 4 filled)
+- `storage/artifacts/sample-avery-5155-review-grid.docx` - **review only,
+  never print this**: same content as the 8-products file, but every cell
+  (writable and spacer/gutter alike) gets a thin visible border, so you
+  can visually confirm text sits centered within its own physical label
+  rectangle. See [Centering/geometry
+  correctness](packages/docx-renderer/src/README.md#centeringgeometry-correctness).
 
 Each `.docx` gets a matching `*.metadata.json` sidecar (byte size, SHA-256,
-sheet/filled/blank counts). Both filenames are deterministic and
+sheet/filled/blank counts). All three filenames are deterministic and
 overwritten on every run - open them directly in Microsoft Word to see the
 real rendered output. `storage/artifacts/` is git-ignored (see
 `.gitignore`), so these files never get committed. See

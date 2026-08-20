@@ -130,6 +130,75 @@ numbers scattered in renderer code. The initial values seeded for Avery
 `PRINT-TEST.md`) - they have not been confirmed against a physical
 printout.
 
+### Centering/geometry correctness
+
+A real visual acceptance test in Microsoft Word on Windows found generated
+Avery 5155 labels were not reliably centered: text slightly right-shifted,
+and columns 2-4 wrapping severely on populated sheets. Structural
+comparison against `fixtures/label-templates/avery-5155/original.docx`
+(`unzip -t`/`-l`, `xmllint`, and direct `w:tblGrid`/`w:tcW`/`w:tblW`
+inspection - never guesswork) found the source template's own `<w:tblPr>`
+declares `<w:tblW w:w="0" w:type="auto"/>` - i.e. "auto" width - despite
+also declaring `<w:tblLayout w:type="fixed"/>`. This combination is a
+well-documented Word compatibility hazard: `tblLayout="fixed"` alone does
+not reliably force Word to honor per-column widths when the table's
+overall preferred width is left "auto"; Word can still recompute effective
+column widths from available page width rather than the declared grid,
+particularly once real content actually fills cells the template's blank
+preview state never exercised. (The source's own table is also ~139 twips
+wider than the page's writable area after margins - real hardware-pitch
+geometry that this renderer must never shrink, but consistent with a
+slight rightward overflow.)
+
+Fixes in `renderFixedGridDocx()` (`fixed-grid-renderer.ts`), applied to
+the source table once before cloning so every sheet inherits them:
+
+- `normalizeTableWidth()` sets an explicit `<w:tblW w:type="dxa">` equal to
+  the exact sum of the table's own already-declared `w:tblGrid` column
+  widths - deriving an internally-consistent value from geometry the
+  source already declares, never inventing a new physical dimension or
+  resizing any column/row.
+- Every generated paragraph now carries an explicit
+  `<w:ind w:left="0" w:right="0" w:firstLine="0" w:hanging="0"/>` -
+  defense in depth so no inherited paragraph indentation (from
+  `styles.xml`'s `Normal` style, or a future template) can silently shift
+  content off-center. Combined with the existing `<w:jc w:val="center"/>`
+  and `<w:vAlign w:val="center"/>` (unchanged), centering now depends only
+  on explicit, tested settings.
+- A new `setTcPrChildInOrder()` helper inserts/replaces `w:tcPr` children
+  (`w:vAlign`, `w:tcBorders`) at their CT_TcPrBase schema-correct position
+  instead of blindly appending, since Word's strict parser can silently
+  ignore/misplace an out-of-order element.
+
+`tests/docx-renderer/real-avery-5155.test.ts` now directly compares the
+generated output's `w:tblGrid`/`w:tcW`/`w:tblW`/`w:tblLayout`/paragraph
+`w:jc`/cell `w:vAlign` against the **source fixture's own inspected
+values** (via `inspectDocxTemplate()`), not hardcoded literals - a real
+structural regression test, not a re-parse-and-hope check.
+
+**Review-only cell outlines**: `renderFixedGridDocx()` accepts an optional
+4th `options.reviewOutlines` parameter. When `true`, every cell (writable
+*and* spacer/gutter, filled or blank) gets a thin, uniform `w:tcBorders`
+so the real physical cell rectangles are visible on screen - useful for
+visually confirming centering. **Never enable this for print**: unlike
+Word's built-in non-printing "Table Gridlines" view (View > Gridlines,
+already on by default for any borderless cell - true for every *writable*
+cell here normally), a `w:tcBorders` border is real ink Word will print.
+`pnpm docx:sample-5155` produces a dedicated
+`storage/artifacts/sample-avery-5155-review-grid.docx` with this enabled;
+the two standard sample artifacts are never affected. Note the source
+template's own 3 spacer/gutter columns already carry their own
+`w:tcBorders` (cloned untouched, as with all spacer-column XML) - `
+reviewOutlines` only adds borders to the 60 writable cells that have none
+in the source, so the *review* artifact shows all 105 cells outlined.
+
+Neither this renderer nor its tests can confirm physical print alignment
+on real label stock - only a human, a real printer, and the manual
+plain-paper overlay procedure in `PRINT-TEST.md` can. What changed here is
+the DOCX's own internal geometry declarations (self-consistent `tblW`,
+zeroed paragraph indentation); it removes a known Word rendering hazard,
+but final on-paper alignment still requires that manual test.
+
 ### No hardcoded physical measurements
 
 This package never invents page/label/margin dimensions. Where the source

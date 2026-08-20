@@ -1,0 +1,113 @@
+.preview-stage__disclaimer {
+  max-width: 70ch;
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-warning-bg);
+  color: var(--color-warning-text);
+  border-radius: var(--radius);
+}
+
+.preview-stage__summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-6);
+  margin: var(--space-4) 0;
+}
+
+.preview-stage__summary dt {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--color-text-muted);
+}
+
+.preview-stage__summary dd {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.preview-stage__controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+.preview-stage__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: 600;
+}
+
+.preview-stage__pager {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.preview-stage__empty {
+  color: var(--color-text-muted);
+}
+
+.preview-stage__sheet {
+  display: grid;
+  grid-auto-rows: 1fr;
+  gap: 0;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  max-width: 100%;
+  overflow-x: auto;
+  aspect-ratio: 8.5 / 11;
+}
+
+.preview-stage__cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 2px;
+  font-size: clamp(0.5rem, 1vw, 0.7rem);
+  overflow: hidden;
+  min-width: 0;
+}
+
+.preview-stage__cell--spacer {
+  background: repeating-linear-gradient(
+    45deg,
+    var(--color-bg),
+    var(--color-bg) 4px,
+    var(--color-surface) 4px,
+    var(--color-surface) 8px
+  );
+}
+
+.preview-stage__sheet--outlined .preview-stage__cell--writable {
+  outline: 1px solid var(--color-primary);
+  outline-offset: -1px;
+}
+
+.preview-stage__sheet--outlined .preview-stage__cell--spacer {
+  outline: 1px dashed var(--color-text-muted);
+  outline-offset: -1px;
+}
+
+.preview-stage__cell-sku {
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.preview-stage__cell-description {
+  color: var(--color-text-muted);
+  overflow-wrap: anywhere;
+}
+
+.preview-stage__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+}

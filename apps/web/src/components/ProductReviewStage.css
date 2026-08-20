@@ -1,0 +1,142 @@
+.review-stage__table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+
+.review-stage table {
+  min-width: 640px;
+}
+
+.review-stage th,
+.review-stage td {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  text-align: left;
+  vertical-align: middle;
+}
+
+.review-stage thead th {
+  background: var(--color-bg);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--color-text-muted);
+}
+
+.review-stage tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.review-stage__row--invalid {
+  background: color-mix(in srgb, var(--color-danger-bg) 60%, transparent);
+}
+
+.review-stage input[type="text"],
+.review-stage input[type="number"] {
+  width: 100%;
+  min-width: 8ch;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-surface);
+}
+
+.review-stage__price-field {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.review-stage__issue {
+  color: var(--color-danger);
+  font-size: 0.85rem;
+}
+
+.status-pill {
+  display: inline-block;
+  padding: 2px var(--space-2);
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.status-pill--auto_accepted,
+.status-pill--approved {
+  background: var(--color-success-bg);
+  color: var(--color-success);
+}
+
+.status-pill--needs_review {
+  background: var(--color-warning-bg);
+  color: var(--color-warning-text);
+}
+
+.status-pill--excluded,
+.status-pill--new {
+  background: var(--color-bg);
+  color: var(--color-text-muted);
+}
+
+.review-stage__empty {
+  color: var(--color-text-muted);
+}
+
+.review-stage__settings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-6);
+  margin-top: var(--space-5);
+}
+
+.review-stage__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-width: 16rem;
+}
+
+.review-stage__field label {
+  font-weight: 600;
+}
+
+.review-stage__field-hint {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+}
+
+.review-stage__templates {
+  border: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.review-stage__templates legend {
+  font-weight: 600;
+  padding: 0;
+  margin-bottom: var(--space-1);
+}
+
+.review-stage__template-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.review-stage__coming-soon {
+  color: var(--color-text-muted);
+}
+
+.review-stage__actions {
+  margin-top: var(--space-5);
+}
+
+.review-stage__blocked-hint {
+  color: var(--color-text-muted);
+  margin-top: var(--space-2);
+}

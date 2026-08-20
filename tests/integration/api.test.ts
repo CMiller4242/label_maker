@@ -276,5 +276,75 @@ describe("label-maker API integration", () => {
       expect(response.statusCode).toBe(422);
       expect(response.json().error.code).toBe("UNSUPPORTED_RENDERING_MODE");
     });
+
+    // Run last: these mutate/add product rows for this describe block's
+    // shared documentId. Placed after every test that depends on a fixed
+    // product count/content so ordering never matters, and the PATCH test
+    // reverts its own edit so a future re-ordering stays safe too.
+    it("PATCH /products/:productId updates only the given fields", async () => {
+      const productsResponse = await app.inject({
+        method: "GET",
+        url: `/documents/${documentId}/products`,
+      });
+      const products = (
+        productsResponse.json() as { products: Array<{ id: string; sku: string; description: string }> }
+      ).products;
+      const target = products[0];
+      if (!target) throw new Error("Expected at least one seeded product.");
+
+      const patchResponse = await app.inject({
+        method: "PATCH",
+        url: `/products/${target.id}`,
+        payload: { sku: "SKU-EDITED" },
+      });
+      expect(patchResponse.statusCode).toBe(200);
+      const patched = patchResponse.json() as { sku: string; description: string };
+      expect(patched.sku).toBe("SKU-EDITED");
+      expect(patched.description).toBe(target.description); // untouched field preserved
+
+      // Revert so this test has no lasting effect on shared fixture state.
+      const revertResponse = await app.inject({
+        method: "PATCH",
+        url: `/products/${target.id}`,
+        payload: { sku: target.sku },
+      });
+      expect(revertResponse.statusCode).toBe(200);
+    });
+
+    it("PATCH /products/:productId returns 404 for an unknown product", async () => {
+      const response = await app.inject({
+        method: "PATCH",
+        url: "/products/00000000-0000-0000-0000-000000000000",
+        payload: { sku: "X" },
+      });
+      expect(response.statusCode).toBe(404);
+      expect(response.json().error.code).toBe("NOT_FOUND");
+    });
+
+    it("POST /documents/:documentId/products adds a manually-entered, immediately-approved row", async () => {
+      const response = await app.inject({
+        method: "POST",
+        url: `/documents/${documentId}/products`,
+        payload: { sku: "SKU-MANUAL", description: "Manually Added Widget", priceCents: 500 },
+      });
+      expect(response.statusCode).toBe(201);
+      const created = response.json() as {
+        sku: string;
+        status: string;
+        confidence: number;
+        include: boolean;
+      };
+      expect(created.sku).toBe("SKU-MANUAL");
+      expect(created.status).toBe("APPROVED");
+      expect(created.confidence).toBe(1);
+      expect(created.include).toBe(true);
+
+      const productsResponse = await app.inject({
+        method: "GET",
+        url: `/documents/${documentId}/products`,
+      });
+      const products = (productsResponse.json() as { products: Array<{ sku: string }> }).products;
+      expect(products.some((p) => p.sku === "SKU-MANUAL")).toBe(true);
+    });
   });
 });

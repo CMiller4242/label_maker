@@ -1,0 +1,17 @@
+{
+  "name": "@label-maker/tests-web",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "@label-maker/shared": "workspace:*",
+    "@label-maker/web": "workspace:*",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.2",
+    "@vitejs/plugin-react": "^4.3.4",
+    "jsdom": "^30.0.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "vitest": "^2.1.8"
+  }
+}

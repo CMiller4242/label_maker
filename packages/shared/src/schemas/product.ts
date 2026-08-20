@@ -65,3 +65,43 @@ export const productListResponseSchema = z.object({
   products: z.array(productSchema),
 });
 export type ProductListResponse = z.infer<typeof productListResponseSchema>;
+
+/**
+ * Request body for PATCH /products/:productId. Every field is optional -
+ * only the fields present are updated - but at least one must be given.
+ * Editing sku/description/priceCents on a NEEDS_REVIEW row does not by
+ * itself make it eligible for a label run; the caller must also send
+ * status: "APPROVED" (a human has now reviewed it) for it to be included,
+ * matching createLabelRun's existing include=true AND status IN
+ * (APPROVED, AUTO_ACCEPTED) filter - this endpoint does not change that
+ * filter, only lets a client legitimately reach the states it already
+ * understands.
+ */
+export const updateProductRequestSchema = z
+  .object({
+    sku: z.string().min(1).nullable(),
+    description: z.string().min(1).nullable(),
+    priceCents: z.number().int().nonnegative().nullable(),
+    include: z.boolean(),
+    status: productStatusSchema,
+  })
+  .partial()
+  .refine((body) => Object.keys(body).length > 0, {
+    message: "At least one field must be provided.",
+  });
+export type UpdateProductRequest = z.infer<typeof updateProductRequestSchema>;
+
+/**
+ * Request body for POST /documents/:documentId/products - adds a single
+ * manually-entered product row (no source page/row, no extraction
+ * candidate behind it). Defaults to status "APPROVED" and confidence 1,
+ * since a human is directly authoring the row rather than an extractor
+ * proposing one for review.
+ */
+export const createProductRequestSchema = z.object({
+  sku: z.string().min(1),
+  description: z.string().min(1),
+  priceCents: z.number().int().nonnegative(),
+  include: z.boolean().default(true),
+});
+export type CreateProductRequest = z.infer<typeof createProductRequestSchema>;

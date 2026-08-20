@@ -1,0 +1,49 @@
+.step-indicator ol {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.step-indicator__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-text-muted);
+}
+
+.step-indicator__badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 2px solid var(--color-border);
+  font-size: 0.8rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.step-indicator__item--active .step-indicator__badge {
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+  color: white;
+}
+
+.step-indicator__item--done .step-indicator__badge {
+  border-color: var(--color-success);
+  background: var(--color-success);
+  color: white;
+}
+
+.step-indicator__item--active .step-indicator__label {
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.step-indicator__item--done .step-indicator__label {
+  color: var(--color-text);
+}
